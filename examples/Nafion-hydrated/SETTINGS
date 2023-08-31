@@ -1,0 +1,170 @@
+#############################################################################################################
+# This explanatory example defines the settings to analyse a NVE trajectory for a model of 
+# "nano-confined water in Nafion". This is an example of a REACTIVE system, where bonds break and form, leading
+# to the formation of new chemical species. The user can use a ASE to visualise the generated TRAJECTORY file. 
+# Due to restrictions in the size of files to be stored in the repository, the trajectory is only 30 ps long,
+# rather short for a rigorous analysis. For this reason, the present case shall be regarded as an example application
+# For more details, the user is referred to the  use_code.md file of the root directory. Comments are preceded with 
+# the symbol "#". The following blocks and directives do not have to comply with the order of appearance below. 
+# They are just ordered this way only for explanatory purposes, and consistent with the use_code.md file.
+#
+# Acronyms:
+# TCF: Transfer Correlation Function 
+# OCF: Orientational Correlation Function
+# RDF: Radial Distribution Function
+# MSD: Mean Square Displacement
+#
+##################################################################################################
+
+#####################
+#####################
+###
+### MODEL settings                                     
+###
+#####################
+#####################
+
+input_geometry_format   xyz                       # Format for the atomic configurations. 
+
+##### The &input_composition block: tagging the atomic species. 
+## This block is necessary to relate the atomic elements of the model to different chemical environments. 
+## In this model, Hch, Hs and Hw are all hydrogen atoms: the Hch is part of a backbone, Hs is initially part of SO3H, and Hw are water hydrogens. 
+&input_composition                                
+  atomic_species  7                               #  Total number of different atomic species. 
+  tags      Cch  Hch  Hs  Och  Sch   Hw   Ow      #  Each of the 7 tags. Each frame of the TRAJECTORY file should list the positions of "Cch" atoms, followed by the atomic positions of Hch atoms, and so on. Tags can be repeated 
+  amounts    56   60  4   12    4    112  56      #  Number of atoms of each tag
+  elements   C    H   H    O    S     H   O       #  Chemical elements corresponding to each tag 
+&end_input_composition                            #
+## IMPORTANT: the order for the definition of     #
+## tags, amounts and elements can be ANY          #.
+###################################################
+
+cell_units   Angstrom                             #  Units for the simulation cell defined in the &simulation_cell block. Valid units: Angstrom and Bohr
+
+##### The &simulation_cell block: definition of the simulation cell, only needed for trajectories in xyz format
+&simulation_cell                                  #
+ 10.06400  0.0000000    0.00000                   #  A(1,1)    A(1,2)    A(1,3)                   
+  0.000000 13.0735195   0.00000                   #  A(2,1)    A(2,2)    A(2,3)
+  0.000000  0.0000000  20.00000                   #  A(3,1)    A(3,2)    A(3,3)
+&end_simulation_cell                              #
+###################################################
+
+change_chemistry True                             # Indicate the algorithm to look for changing chemical species. Options are True or False. If True, the block &search_chemistry is required:
+
+##### The &search_chemistry block. This is needed if "change_chemistry" is set to "True" 
+## This block must specify the criteria to analyse systems with changing chemical species. Activation of this block:
+## 1) prints the file TRACK_CHEMISTRY with the xyz position of the chemical species along the trajectory
+## 2) computes the residence times (RES_TIMES file) 
+## 3) uses the information provided in the &lifetime block (and &data_analysis, see below) to compute the Transfer Correlation Function (TCP). In this case it will be the proton-TCF   
+&search_chemistry
+  total_number     4                              # Total number of changing chemical species in the simulation cell
+
+  &bonding_criteria                               ##### Criteria to define a chemical species 
+    number_of_bonds   3                           # Each chemical species will be composed of an oxygen site (see &environment criteria below) which will have 3 bonds... 
+    only_element      H                           # ... only with hydrogen atoms
+    cutoff          1.3  Angstrom                 # The maximum distance criteria ("cutoff") to define each bond is 1.3 Angstrom. Units can also be given in "Bohr"
+    &possible_extra_bonds                         ### Definition of possible extra bonds, as part of the bonding criteria above. This is necessary for systems with interfaces. This example considers:
+      types_of_bonds 2                            # Two types of bonds:
+      Och  Hw  1.25  Angstrom                     # 1) bonds between Och and Hw with a cutoff of 1.25 Angstrom
+      Och  Hs  1.25  Angstrom                     # 2)bonds between Och and Hs with a cutoff of 1.25 Angstrom
+    &end_possible_extra_bonds                     ###
+  &end_bonding_criteria                           #####
+
+  &acceptor_criteria                              #### Criteria to search for acceptor sites (Ow and Och) to form new chemical species around (thence the word environment) an already formed chemical species (donor).    
+    include_tags     2  Ow Och                    # The search will only look for atoms with Ow and Och as atomic tags around the donor. This means that both Ow and Och will act as sites for the forming chemical species
+    exclude_pairs    1  Och                       # (Optional) Pairs Och-Och will be excluded in the search. This means that a Och acceptor will not have a Och as a donor. 
+    cutoff           3.20  Angstrom               # The search will be limited within 3.2 Angstrom around the donor. Units can also be in Bohr
+  &end_acceptor_criteria                          ####
+
+&end_search_chemistry                             
+## IMPORTANT: internally, acceptors Ow and Och will changed their tags to Ow* and Och*, 
+## respectively, when they become part of a new chemical species. This is relevant to &RDF analysis
+##################################################################################################
+
+##### The &monitored_species block. This blocks defines the particular type of species to "monitor" along the trajectory
+# The defined species MUST NOT be the changing chemical species
+&monitored_species
+  name H2O                                        # Name of the species. In this case water.
+  reference_tag Ow                                # Only Ow atoms will be part of water. Ow sites can also form chemical species as described above
+  &atomic_components                              ##### This is to define the atomic composition of the monitored species. For the case of water it is obvious, but the structure of the block allows defining more complex structures:
+    number_components 2                           # Number of atomic components (H and O)
+    H  2                                          # 2 H atoms
+    O  1                                          # 1 O atom
+  &end_atomic_components                          #####
+  bond_cutoff      1.2 Angstrom                   # The maximum distance criteria for atomic bonding in this species is 1.2 Angstrom. Units can also be in "Bohr"
+  compute_amount   .True.                         # Computes the average number (and STD) of the monitored species. The computed number depends on the settings for the &region block and the ignore_initial directive, if defined 
+&end_monitored_species                            
+#############################################################################################
+
+######################################
+######################################
+###
+### TRAJECTORY settings for analysis                                         
+###
+######################################
+######################################
+
+ensemble   NVE                   #  Type of ensemble. Options: NVE, NVT, NPT 
+
+timestep   10  fs                #  Time step of the recoderd trajectory, which is not necessarily the same as the time step to integrated the MD equations. Valid units: fs and ps. In this case, timestep could also be set to "0.010 ps"
+
+print_retagged_trajectory  TRUE              # Print tagged trajectory (False by default)
+
+#### The &rdf block: computes the RDF for the species defined 
+&rdf                                              
+ dr 0.02  Angstrom                                # Use a distance discretization of 0.02 Angstrom
+ tags_species_a  1  Ow                            # Defines the tags of species a
+ tags_species_b  2  Ow* Och*                      # Defines the tags of species b
+&end_rdf                                          
+####
+
+#### The &data_analysis block: instructs the code how to process and segment the trajectory for the computation of the TCF, MSD and OCF.
+## The directive "overlap_interval" is convenient to average quantities. 
+## Computed averages will be printed to TCF_AVG, MSD_AVG and OCF_AVG files, as long as the blocks &lifetime, &msd and &ocf are defined (see below)
+&data_analysis                                    
+  time_interval   10.0  ps                        # Take time segments of 10 ps
+  overlap_time    0.50  ps                        # Initialise a new analysis every 0.50 ps. This is convenient to average computed quantities, whose values will be printed to TCF_AVG, MSD_AVG and OCF_AVG
+  ignore_initial  2.00  ps                        # Ignore the first 2 ps of the trajectory  
+&end_data_analysis                                #
+###################################################
+
+#### The &lifetime block: computes the TCF for the changing chemical species
+&lifetime                                         
+  method  HiCF                                    # Method used. In this case the History Independent Correlation Function (HiCF) is computed. See manual for definition and more options.
+  rattling_wait  0.2 ps                           # Once the transfer (in this case H) has occurred, the algorithm will wait 0.2 ps to accept the transfer. If the proton returns back to its donor, the transfer (rattling) is discarded
+&end_lifetime                                     
+####
+
+#### The &msd block: computes the MSD for the monitored species defined in the &monitored_species block. 
+&msd                                              
+  select xy                                       # Compute only the xy component of the MSD. Options are: x, y, z, xy, xz, yz and xyz
+  pbc_xyz   T  T  T                               # Instructs is PBCs are applied to each coordinate or not 
+&end_msd                                          
+####
+
+#### The &ocf block: computes the OCF for the monitored species
+&ocf                                              
+  legendre_order  2                               # Define the order of the Legendre polynomial.  
+  u_definition    bond_12-13                      # Definition of the unit vector to evaluate the OCF. Options available are: bond_12, bond_13, bond_123, bond_12-13 and plane.
+&end_ocf                                          
+####
+
+#### The &region block: constrain the computation of MSD, OCF and RDF to a given region within the simulation cell.
+## If this block is omitted, the whole simulation cell is considered.
+## If one or two Delta directives are omitted, the whole spatial domain of the simulation cell along x, y or z is considered
+## IMPORTANT: this block is convenient to systems with interfaces such as this example
+## ALC_TRAJECTORY accepts multiple regions along x, y and z.
+&region                                           
+  Delta_x   -1.6  11.6  inside                    # Defines the x domain for analysis  
+  Delta_y   -1.0  14.0  inside                    # Defines the y domain for analysis
+  Delta_z    8.0  12.0  outside                   # Defines the z domain for analysis
+&end_region                                       
+####
+
+#### The &track_unchanged_chemistry block: allows tracking species that do not change their chemistry along the trajectory
+## IMPORTANT: if for some unexpected reason the defined species to track change their chemistry, the analysis will be printed up to the frame when the species changed its chemistry
+&track_unchanged_chemistry
+  number 4                                        # Number of indexes to track
+  tag  Sch                                        # Requested species tag
+  list_indexes  133  134 135  136                 # Atomic indexes. If these indexes do not correspond to the requested tag, the execution is aborted
+&end_track_unchanged_chemistry 
