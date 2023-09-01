@@ -36,6 +36,7 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 * [***tools***](./tools): shell files for building, compiling and testing the code automatically.
 * [.gitignore](./.gitignore): instructs Git which file to ignore for development and integration.
 * [CMakeList.txt](./CMakeList.txt): sets the framework for code building and testing with CMake. This file must ONLY be modified to add test cases.
+* [Jenkinsfile](./Jenkinsfile): file with specifications to build and run the testing infrastructure.
 * [LICENSE](./LICENSE): BSD 3-Clause License for ALC_TRAJECTORY. 
 * README.md: this file.
 * [cmake_building.md](./cmake_building.md): steps to build, compile and run tests using the CMake platform.
