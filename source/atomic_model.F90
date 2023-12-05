@@ -12,6 +12,7 @@ Module atomic_model
   Use constants,          Only : max_components, &
                                  max_at_species, &
                                  Bohr_to_A, &
+                                 Rads_to_degrees, &
                                  chemsymbol, &
                                  NPTE
                                  
@@ -28,7 +29,8 @@ Module atomic_model
   Use numprec,            Only : li, &
                                  wi, &
                                  wp
-  Use process_data,       Only : capital_to_lower_case
+  Use process_data,       Only : capital_to_lower_case,&
+                                 remove_symbols
   Use unit_output,        Only : error_stop,&
                                  info 
 
@@ -112,7 +114,7 @@ Module atomic_model
   End Type        
 
   ! Type for the definition of new chemistry
-  Type :: chemistry 
+  Type :: chemistry_type 
     Type(in_integer)   :: N0
     Integer(Kind=wi)   :: indx_new(max_components)
     Integer(Kind=wi)   :: indx_prev(max_components)
@@ -120,17 +122,40 @@ Module atomic_model
     Type(bonding)      :: bonds
   End Type 
   
+  ! Type for geometrical paremeter
+  Type, Public :: geo_param_type
+    Type(in_string)      :: invoke
+    Character(Len=256)   :: name
+    Type(in_string)      :: tag_species
+    Integer(Kind=wi)     :: nspecies
+    Character(Len=8)     :: species(max_at_species)
+    Integer(Kind=wi)     :: num_spec(max_at_species)
+    Type(in_param)       :: lower_bound
+    Type(in_param)       :: upper_bound
+    Type(in_param)       :: delta 
+  End Type
+  
+  ! Type for computation of the internal geometry
+  Type, Public :: geo_spec_type
+    Type(in_string)       :: invoke
+    Character(Len=256)    :: tag
+    Type(geo_param_type)  :: dist
+    Type(geo_param_type)  :: angle
+  End Type 
+  
   ! Type to describe the definition of the monitoered species
-  Type :: type_spec_def
-    Type(in_string)     :: name
-    Integer(Kind=wi)    :: num_components
-    Type(in_string)     :: reference_tag
-    Type(in_param)      :: bond_cutoff
-    Integer(Kind=wi)    :: atoms_per_species 
-    Type(in_string)     :: atomic_components
-    Character(Len=8)    :: element(max_at_species)
-    Integer(Kind=wi)    :: N0_element(max_at_species)
-    Type(in_logic)      :: compute_amount
+  Type :: spec_def_type
+    Type(in_string)       :: name
+    Integer(Kind=wi)      :: num_components
+    Type(in_string)       :: reference_tag
+    Type(in_param)        :: bond_cutoff
+    Integer(Kind=wi)      :: atoms_per_species 
+    Type(in_string)       :: atomic_components
+    Character(Len=8)      :: element(max_at_species)
+    Integer(Kind=wi)      :: N0_element(max_at_species)
+    Type(in_logic)        :: compute_amount
+    Type(geo_spec_type)   :: intra_geom
+    Type(geo_spec_type)   :: inter_geom
   End Type 
 
   ! Types related to format for VASP files 
@@ -185,9 +210,9 @@ Module atomic_model
     Character(Len= 2), Allocatable :: element_file(:)
     Integer(Kind=wi),  Allocatable :: amount_file(:)
     ! list elements
-    Type(list_type)                       :: list
+    Type(list_type)  :: list
     ! Constrained dynamics
-    Logical                               :: selective_dyn
+    Logical          :: selective_dyn
     !!! Variables related to species
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Indicator for the monitored species
@@ -208,7 +233,7 @@ Module atomic_model
     ! Indicator to search for chemistry 
     Type(in_string), Public               :: search_chemistry 
     ! new chemistry
-    Type(chemistry), Public               :: chem
+    Type(chemistry_type), Public          :: chem
     ! Number of extra species found
     Integer(Kind=wi), Public              :: number_species_found
     ! Type for those components defined in input_composition
@@ -218,16 +243,18 @@ Module atomic_model
     ! Input model 
     Type(config_type), Public             :: config 
     ! definition of species to be monitored 
-    Type(type_spec_def), Public           :: species_definition
+    Type(spec_def_type), Public           :: species_definition
     ! Tracked species
     Type(tracking_type), Public           :: track_chem(max_components)
+    ! Shortest pair
+    Type(geo_param_type), Public          :: nndist
 
    Contains
      Private
-       Procedure          :: init_atomic_arrays     => allocate_input_atomic_arrays
-       Procedure          :: init_vasp_arrays       => allocate_arrays_vasp_trajectory
-       Procedure, Public  :: init_species           => allocate_species_arrays
-       Procedure, Public  :: init_input_composition => allocate_input_composition_arrays
+       Procedure          :: init_atomic_arrays       => allocate_input_atomic_arrays
+       Procedure          :: init_vasp_arrays         => allocate_arrays_vasp_trajectory
+       Procedure, Public  :: init_species             => allocate_species_arrays
+       Procedure, Public  :: init_input_composition   => allocate_input_composition_arrays
        Final              :: cleanup
   End Type model_type
 
@@ -331,7 +358,6 @@ Contains
 
   End Subroutine allocate_species_arrays
 
-  
   Subroutine cleanup(T)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Deallocate variables
@@ -518,7 +544,8 @@ Contains
                         Write (messages(1),'(a,i4,3a,i6)') '***ERROR: Trouble to identify unit ', jin, ' of species "',&
                                                  & Trim(model_data%species_definition%name%type),&
                                                  & '" for the configuration of frame: ', frame    
-                        Write (messages(2),'(a)') ' It is likely the species represents does not represent a molecule!'
+                        Write (messages(2),'(a)') ' It is likely the species represents does not represent a molecule!&
+                                                 & Please review the definition of "&monitored_species".'
                         Call info(messages, 2)
                         Call error_stop(' ')
              
@@ -572,7 +599,8 @@ Contains
                                     & is not adequate. The user must adjust this value'
 
       Write (messages(5),'(a)') ' 3) the cell vectors are not strictly consistent with the geometry of the input structure.'
-      Write (messages(6),'(a)') ' 4) wrong definition of the species. Check the "reference_tag" and the &atomic_components block.'
+      Write (messages(6),'(a)') ' 4) wrong definition of the monitored species.&
+                                & Check the "reference_tag" and the &atomic_components block.'
       Call info(messages, 6)
       If (model_data%change_chemistry%stat) Then
          Write (messages(1),'(a)') '************************************************************************************'
@@ -2211,6 +2239,11 @@ Contains
     If (model_data%config%monitored_species%fread) Then
       Call check_definition_monitored_species(files, model_data)
     End If
+
+    ! Check &shortest_pair
+    If (model_data%nndist%invoke%fread) Then
+      Call check_shortest_pair(files, model_data%nndist, model_data)
+    End If
     
   End Subroutine check_model_settings
 
@@ -2292,7 +2325,7 @@ Contains
     ! Exclude pairs
     If (model_data%chem%acceptor%info_exclude%fread) Then
       If (model_data%chem%acceptor%info_exclude%fail) Then    
-        Write (messages(2),'(1x,a)')  'Wrong specification for directive "exclude_pairs". See manual.'
+        Write (messages(2),'(1x,a)')  'Wrong specification for directive "exclude_pairs". See the "use_code.md" file.'
         Call info(messages, 2)
         Call error_stop(' ') 
       End If
@@ -2334,7 +2367,7 @@ Contains
 
     If (model_data%chem%acceptor%info_include%fread) Then
       If (model_data%chem%acceptor%info_include%fail) Then    
-        Write (messages(2),'(1x,a)')  'Wrong specification for directive "include_tags". See manual.'
+        Write (messages(2),'(1x,a)')  'Wrong specification for directive "include_tags". See the "use_code.md" file.'
         Call info(messages, 2)
         Call error_stop(' ') 
       End If
@@ -2608,7 +2641,7 @@ Contains
     Logical             :: flag, found
     
     error_set = '***ERROR in file '//Trim(files(FILE_SET)%filename)//' -'
-    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&monitored_species" block'
+    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&monitored_species" block.'
 
     If (model_data%species_definition%atomic_components%fread) Then
       ! Check information within the &atomic_components sub-block
@@ -2648,10 +2681,23 @@ Contains
           Call info(messages, 2)         
           Call error_stop(' ')
         End If
-       
       End Do
   
-      ! Calculate total number of atoms per species
+     ! Check there is no repetition of elements in the &atomic_components
+     Do k = 1, model_data%species_definition%num_components
+       Do j=1, model_data%species_definition%num_components
+         If (k /= j) Then
+           If (Trim(model_data%species_definition%element(k))==Trim(model_data%species_definition%element(j))) Then
+             Write (messages(2),'(1x,a)') 'Problems in "&atomic_components": definition for the atomic element "'& 
+                                         &//Trim(model_data%species_definition%element(k))//'" is repeated.'
+             Call info(messages, 2)
+             Call error_stop(' ') 
+           End If 
+         End If
+       End Do
+     End Do
+  
+     ! Calculate total number of atoms per species
       model_data%species_definition%atoms_per_species=0
       Do j=1, model_data%species_definition%num_components
         model_data%species_definition%atoms_per_species = model_data%species_definition%atoms_per_species + &
@@ -2714,8 +2760,7 @@ Contains
       flag=.True.
       j=1
       Do While (j <= model_data%input_composition%atomic_species .And. flag)
-        If (Trim(model_data%input_composition%tag(j))==&
-          & Trim(model_data%species_definition%reference_tag%type)) Then
+        If (Trim(model_data%input_composition%tag(j))==Trim(model_data%species_definition%reference_tag%type)) Then
           flag=.False.
           ref_element=Trim(model_data%input_composition%element(j))
         End If  
@@ -2744,9 +2789,356 @@ Contains
     Else
       model_data%species_definition%compute_amount%stat=.False.
     End If
+
+    If (.Not. model_data%species_definition%name%fread) Then
+      If (model_data%species_definition%atoms_per_species /= 1 ) Then
+        Write (messages(2),'(1x,a)')  'The "name" directive has not been defined.'
+        Call info(messages, 2)
+        Call error_stop(' ') 
+      Else
+        model_data%species_definition%name%type=Trim(model_data%species_definition%reference_tag%type)
+      End If
+    Else
+      If (model_data%species_definition%atoms_per_species == 1 ) Then
+        Write (messages(2),'(1x,a)')  'The "name" directive must only be defined when the number of atoms&
+                                    & for each species is larger than 2'
+        Call info(messages, 2)
+        Call error_stop(' ') 
+      End If       
+    End If
+
+    ! Check intramol_stat_settings 
+    If (model_data%species_definition%intra_geom%invoke%fread) Then
+      If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
+        If (model_data%species_definition%atoms_per_species < 3) Then
+        Write (messages(2),'(1x,a)')  'Problems in "'//Trim(model_data%species_definition%intra_geom%invoke%type)//&
+                                     &'": it is not possible to define an internal angle when monitored species are diatomic.& 
+                                     & Remove "'//Trim(model_data%species_definition%intra_geom%angle%invoke%type)//'"'
+        Call info(messages, 2)
+        Call error_stop(' ') 
+        End If
+      End If
+      If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
+        Call check_settings_geom_param(messages(1), model_data%species_definition%intra_geom%invoke%type,&
+                                    & model_data%species_definition%intra_geom%dist)
+        Call check_intramol_stat_species(messages(1),model_data%species_definition,model_data%species_definition%intra_geom%dist)                              
+      End If
+      If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
+        Call check_settings_geom_param(messages(1), model_data%species_definition%intra_geom%invoke%type,&
+                                   & model_data%species_definition%intra_geom%angle)
+        Call check_intramol_stat_species(messages(1),model_data%species_definition,model_data%species_definition%intra_geom%angle)  
+      End If
+      If ((.Not. model_data%species_definition%intra_geom%dist%invoke%fread) .And. &
+          (.Not. model_data%species_definition%intra_geom%angle%invoke%fread)) Then
+           Write (messages(2),'(1x,a)')  'Empty "'//Trim(model_data%species_definition%intra_geom%invoke%type)//&
+                                     &'" block! Please define "&distance_parameters" and/or "&angle_parameters",&
+                                     & or remove the block.'
+           Call info(messages, 2)
+           Call error_stop(' ') 
+      End If    
+    End If
+
+    ! Check intermol_stat_settings 
+    If (model_data%species_definition%inter_geom%invoke%fread) Then
+      If (model_data%species_definition%inter_geom%dist%invoke%fread) Then
+        Call check_settings_geom_param(messages(1), model_data%species_definition%inter_geom%invoke%type,&
+                                    & model_data%species_definition%inter_geom%dist)
+      End If
+      If (model_data%species_definition%inter_geom%angle%invoke%fread) Then
+        Call check_settings_geom_param(messages(1), model_data%species_definition%inter_geom%invoke%type,&
+                                   & model_data%species_definition%inter_geom%angle)
+      End If
+      If ((.Not. model_data%species_definition%inter_geom%dist%invoke%fread) .And. &
+          (.Not. model_data%species_definition%inter_geom%angle%invoke%fread)) Then
+           Write (messages(2),'(1x,a)')  'Empty "'//Trim(model_data%species_definition%inter_geom%invoke%type)//&
+                                     &'" block! Please define "&distance_parameters" and/or "&angle_parameters",&
+                                     & or remove the block.'
+           Call info(messages, 2)
+           Call error_stop(' ') 
+      End If    
+    End If
+    
     
   End Subroutine check_definition_monitored_species
 
+  Subroutine check_intramol_stat_species(error_set, T, M)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check species defined to 
+    ! compute the statistices of intramolecular
+    ! geometry
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Character(Len=256),   Intent(In   ) :: error_set
+    Type(spec_def_type),  Intent(In   ) :: T
+    Type(geo_param_type), Intent(InOut) :: M   
+  
+    Integer(Kind=wi)   ::  k, j, n
+    Character(Len=1)   :: num
+    Character(Len=256) :: messages(3)
+    
+
+    messages(1)=error_set
+    Write (messages(2),'(1x,a)') 'Problems in "'//Trim(M%invoke%type)//'" of "&intramol_stat_settings"'
+
+    Do j = 1, M%nspecies
+      M%num_spec(j)=0
+      Do k = 1, T%num_components
+        If (Trim(M%species(j))==Trim(T%element(k)))Then
+          M%num_spec(j)=M%num_spec(j)+1
+        End If
+      End Do      
+      If (M%num_spec(j)==0) Then
+        Write(num,'(i1)') j 
+        Write (messages(3),'(1x,a)') 'Argument '//Trim(num)//' of the "species" directive does not&
+                                     & correspond to the elements defined in "&atomic_components"' 
+        Call info(messages, 3)
+        Call error_stop(' ') 
+      End If
+    End Do
+    
+    
+    Do k = 1, T%num_components
+      n=0
+      Do j = 1, M%nspecies
+        If (Trim(M%species(j))==Trim(T%element(k)))Then
+          n=n+1
+        End If
+      End Do
+      If (n>T%N0_element(k))Then
+        Write(num,'(i1)') n 
+        Write (messages(3),'(1x,a)') 'The number of times the element "'//Trim(T%element(k))//'" is listed in the&
+                                   & "species" directive ('//Trim(num)//' times) exceeds the value set in "&atomic_components"' 
+        Call info(messages, 3)
+        Call error_stop(' ') 
+      End If
+    End Do
+    
+  End Subroutine check_intramol_stat_species
+  
+  Subroutine check_settings_geom_param(error_set, inblock, M)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check distance and angle settings
+    ! for statistics of the monitored species
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Character(Len=256),   Intent(In   ) :: error_set
+    Character(Len=256),   Intent(In   ) :: inblock 
+    Type(geo_param_type), Intent(InOut) :: M   
+
+    Character(Len=256)  :: messages(3), error
+    
+    messages(1)=error_set
+    
+    If (Trim(inblock)=='&intramol_stat_settings') Then
+      If (M%tag_species%fread) Then
+         If (M%tag_species%fail) Then
+            Write (messages(2),'(1x,a)') 'Check "'//Trim(inblock)//'" block: Problems to read the "'//Trim(M%tag_species%type)//&
+                                        &'" directive within "'//Trim(M%invoke%type)//'".' 
+            Call info(messages, 2)
+            Call error_stop(' ') 
+         End If
+      Else
+        Write (messages(2),'(1x,a)')  'Problems in "'//Trim(inblock)//'": The user must define the species involved&
+                                    & inside "'//Trim(M%invoke%type)//'" using the "species" directive, which is missing.' 
+        Call info(messages, 2)
+        Call error_stop(' ') 
+      End If
+    Else If (Trim(inblock)=='&intermol_stat_settings') Then 
+      If (M%tag_species%fread) Then
+         Write (messages(2),'(1x,a)') 'Check "'//Trim(inblock)//'" block: the definition of the "'//Trim(M%tag_species%type)//&
+                                     &'" directive within "'//Trim(M%invoke%type)//'" is not necessary.' 
+         Write (messages(3),'(1x,a)') 'The statistical analysis is carried out using the "reference_tag" defined in&
+                                     & "&monitored_species". Please remove "'//Trim(M%tag_species%type)//'" from this block.' 
+
+         Call info(messages, 3)
+         Call error_stop(' ') 
+      End If
+    End If 
+ 
+    ! Error message just in case....
+    error=Trim(messages(1))//' Check "'//Trim(M%invoke%type)//'" inside "'//Trim(inblock)//'".'
+    
+    !Check lower_bound, upper_bound and delta
+    If (.Not. M%lower_bound%fread) Then
+      M%lower_bound%tag='lower_bound'
+    End If
+    If (.Not. M%upper_bound%fread) Then
+      M%upper_bound%tag='upper_bound'
+    End If
+    If (.Not. M%delta%fread) Then
+      M%delta%tag='delta'
+    End If
+    
+    If (Trim(M%invoke%type) == '&distance_parameters') Then
+      Call check_length_directive(M%lower_bound, error, .True., 'directive')
+      Call check_length_directive(M%upper_bound, error, .True., 'directive')
+      Call check_length_directive(M%delta, error, .True., 'directive')
+      If (M%lower_bound%value >= M%upper_bound%value) Then
+        Write (messages(2),'(1x,a)')  'Problems with "'//Trim(M%invoke%type)//'" in "'//Trim(inblock)//'": The value of&
+                                    & "upper_bound" must be larger than "lower_bound" (make sure this is the case if&
+                                    & you use different units)' 
+        Call info(messages, 2)
+        Call error_stop(' ') 
+      End If
+    Else If (Trim(M%invoke%type) == '&angle_parameters') Then
+      Call check_angle_directive(M%lower_bound, error, .True., 'directive')
+      Call check_angle_directive(M%upper_bound, error, .True., 'directive')
+      Call check_angle_directive(M%delta, error, .True., 'directive')
+      If (M%lower_bound%value >= M%upper_bound%value) Then
+        Write (messages(2),'(1x,a)')  'Problems with "'//Trim(M%invoke%type)//'" in "'//Trim(inblock)//'": The value of&
+                                    & "upper_bound" must be larger than "lower_bound" (make sure this is the case if&
+                                    & you use different units)' 
+        Call info(messages, 2)
+        Call error_stop(' ') 
+      End If
+    End If  
+     
+  End Subroutine check_settings_geom_param
+  
+  Subroutine check_shortest_pair(files, M, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check the definition of the
+    ! parameters defined in the &shortest_pair block
+    !
+    ! author    - i.scivetti Nov 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),      Intent(InOut) :: files(:)
+    Type(geo_param_type), Intent(InOut) :: M 
+    Type(model_type),     Intent(In   ) :: model_data
+
+    Character(Len=256)  :: messages(3), error_set
+    Character(Len=8)    :: tag
+    Logical             :: flag
+    Integer(Kind=wi)    :: j, k            
+    
+    ! Error message just in case....
+    error_set = '***ERROR in file '//Trim(files(FILE_SET)%filename)//' -'
+    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&shortest_pair" block.'
+
+    If(M%tag_species%fread) Then
+      If (M%tag_species%fail) Then
+        Write (messages(2),'(1x,a)')  'Problems to define the "tag_species" directive'  
+        call info(messages, 2)
+        call error_stop(' ')
+      Else
+        If (Trim(M%species(1)) == Trim(M%species(2))) Then
+          Write (messages(2),'(1x,a)')  'The two tags defined in "tag_species" must be different.'  
+          call info(messages, 2)
+         call error_stop(' ')
+        End If
+      End If
+    Else
+      Write (messages(2),'(1x,a)')  'The user must define the "tag_species" directive'  
+      call info(messages, 2)
+      call error_stop(' ')
+    End If
+    
+    !Check if tags are defined in the &input_composition block  
+    Do k=1, M%nspecies
+      tag=Trim(M%species(k))
+      Call remove_symbols(tag,'*')
+      flag=.True.
+      j=1
+      Do While (j <= model_data%input_composition%atomic_species .And. flag)
+        If (Trim(model_data%input_composition%tag(j))==Trim(tag)) Then
+          flag=.False.
+        End If  
+        j=j+1
+      End Do
+      If (flag) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'The tag "'//Trim(M%species(k))//'" defined in the "tag_species" directive&
+                                       & is not a valid option. Please review the definition of the &input_composition block' 
+        Call info(messages, 1)
+        Call error_stop(' ') 
+      End If 
+    End Do
+    
+    !Check lower_bound, upper_bound and delta
+    If (.Not. M%lower_bound%fread) Then
+      M%lower_bound%tag='lower_bound'
+    End If
+    If (.Not. M%upper_bound%fread) Then
+      M%upper_bound%tag='upper_bound'
+    End If
+    If (.Not. M%delta%fread) Then
+      M%delta%tag='delta'
+    End If
+    
+    Call check_length_directive(M%lower_bound, messages(1), .True., 'directive')
+    Call check_length_directive(M%upper_bound, messages(1), .True., 'directive')
+    Call check_length_directive(M%delta,       messages(1), .True., 'directive')
+    If (M%lower_bound%value >= M%upper_bound%value) Then
+      Write (messages(2),'(1x,a)')  'The value of "upper_bound" must be larger than "lower_bound"&
+                                  & (make sure this is the case if you use different units)' 
+      Call info(messages, 2)
+      Call error_stop(' ') 
+    End If
+     
+  End Subroutine check_shortest_pair
+  
+  
+  Subroutine check_angle_directive(T, error_set, kill, type_directive)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check angle related directives
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(in_param),          Intent(InOut)  :: T
+    Character(Len=*),        Intent(In   )  :: error_set
+    Logical,                 Intent(In   )  :: kill
+    Character(Len=*),        Intent(In   )  :: type_directive
+  
+    Character(Len=256)  :: messages(2)
+    
+    If (T%fread) Then
+      If (T%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Wrong (or missing) settings for the "'&
+                                      &//Trim(T%tag)//'" directive.'
+        Call info(messages, 1)
+        Call error_stop(' ')
+      Else
+        If (T%value < epsilon(1.0_wp)) Then
+          Write (messages(1),'(2(1x,a))') Trim(error_set), &
+                                    &'Input value for "'//Trim(T%tag)//&
+                                    &'" MUST be larger than zero'
+          Call info(messages, 1)
+          Call error_stop(' ')
+        End If
+        Call capital_to_lower_case(T%units)
+        If (Trim(T%units) /= 'rads' .And. Trim(T%units) /= 'degrees') Then
+           If (Trim(type_directive) /= 'inblock') Then
+             Write (messages(1),'(2(1x,a))')  Trim(error_set),&
+                                      & 'Units for directive "'//Trim(T%tag)//'" must be "Degrees" or "Rads".&
+                                      & Have you defined the units? Please review.'
+           Else
+             Write (messages(1),'(2(1x,a))')  Trim(error_set), '. Units for angles must be "Degrees" or "Rads".&
+                                           & Have you defined the units? Please review'
+           End If
+           Call info(messages, 1)
+           Call error_stop(' ')
+        End If
+        ! Transform to Angstrom
+        If (Trim(T%units) == 'rads') Then
+           T%value=Rads_to_degrees * T%value
+        End If
+      End If
+    Else 
+      If (kill) Then
+        If (Trim(type_directive) /= 'inblock') Then
+          Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "'//Trim(T%tag)//'" directive'
+        Else
+          Write (messages(1),'(1x,a)')  Trim(error_set)
+        End If  
+        Call info(messages, 1)
+        Call error_stop(' ')
+      End If
+    End If
+    
+  End Subroutine check_angle_directive  
+  
+  
   Subroutine check_length_directive(T, error_set, kill, type_directive)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check length related directives
@@ -2776,7 +3168,7 @@ Contains
         End If
         Call capital_to_lower_case(T%units)
         If (Trim(T%units) /= 'angstrom' .And. Trim(T%units) /= 'bohr') Then
-           If (Trim(type_directive) /= 'block') Then
+           If (Trim(type_directive) /= 'inblock') Then
              Write (messages(1),'(2(1x,a))')  Trim(error_set),&
                                       & 'Units for directive "'//Trim(T%tag)//'" must be "Angstrom" or "Bohr".&
                                       & Have you defined the units? Please review.'
@@ -2794,7 +3186,7 @@ Contains
       End If
     Else 
       If (kill) Then
-        If (Trim(type_directive) /= 'block') Then
+        If (Trim(type_directive) /= 'inblock') Then
           Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "'//Trim(T%tag)//'" directive'
         Else
           Write (messages(1),'(1x,a)')  Trim(error_set)

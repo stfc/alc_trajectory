@@ -13,7 +13,9 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module trajectory 
   Use atomic_model, Only : model_type, &
+                           geo_param_type, &
                            about_cell, &
+                           min_intra, &
                            atomistic_model, & 
                            check_definition_bonds, &
                            check_PBC,&
@@ -27,11 +29,17 @@ Module trajectory
   Use constants,    Only : max_components, &
                            max_at_species, &
                            max_unchanged_atoms,&
+                           Rads_to_degrees, &
                            pi
 
   Use fileset,      Only : file_type, &
-                           FILE_TCF, &
-                           FILE_TCF_AVG, &
+                           FILE_COORD_DISTRIB, &
+                           FILE_INTERMOL_DISTANCES_NN1, &
+                           FILE_INTERMOL_DISTANCES_NN2, &
+                           FILE_INTERMOL_ANGLES, &
+                           FILE_INTRAMOL_DISTANCES, &
+                           FILE_INTRAMOL_ANGLES, &
+                           FILE_SHORTEST_PAIR, &
                            FILE_MSD, &
                            FILE_MSD_AVG, &
                            FILE_OCF, &
@@ -39,6 +47,8 @@ Module trajectory
                            FILE_RDF, &
                            FILE_RES_TIMES, &
                            FILE_SET, & 
+                           FILE_TCF, &
+                           FILE_TCF_AVG, &
                            FILE_TRAJECTORY,&
                            FILE_TRACK_CHEMISTRY,&
                            FILE_TAGGED_TRAJ, &
@@ -49,7 +59,6 @@ Module trajectory
                            in_logic,   &
                            in_scalar,  &
                            in_param,   & 
-                           in_param_array, & 
                            in_string
 
   Use numprec,      Only : wi,&
@@ -101,6 +110,7 @@ Module trajectory
   ! Type to describe species
   Type :: species_type
     Integer(Kind=wi) :: list(max_at_species)
+    Integer(Kind=wi) :: nn(2)
     Logical          :: alive
     Real(Kind=wp)    :: u(3,2)
     Real(Kind=wp)    :: u0(3,2)
@@ -117,7 +127,7 @@ Module trajectory
     Integer(Kind=wi) :: number(3)
   End Type
   
-  !Type to describe the region where to constrain the analysis
+  !Type to describe the msd
   Type :: msd_type
     Type(in_string)  :: invoke
     Type(in_string)  :: pbc_xyz
@@ -126,7 +136,7 @@ Module trajectory
     Real(Kind=wp)    :: r2
   End Type
 
-  !Type to describe the region where to constrain the analysis
+  !Type to describe the rdf
   Type :: rdf_type
     Type(in_string)  :: invoke
     Type(in_string)  :: tags_species_a
@@ -138,7 +148,17 @@ Module trajectory
     Integer(Kind=wi) :: num_type_a
     Integer(Kind=wi) :: num_type_b
   End Type
-
+  
+  !Type to describe the coordinate distribution
+  Type :: coord_distrib_type
+    Type(in_string)  :: invoke
+    Type(in_string)  :: species_dir
+    Character(Len=8) :: species
+    Type(in_string)  :: coordinate
+    Type(in_param)   :: delta
+    Integer(Kind=wi) :: indx
+  End Type
+  
   !Type to print the position of selected atoms, whose content remain unchanged
   Type :: unchanged_type
     Type(in_string)  :: invoke
@@ -181,6 +201,7 @@ Module trajectory
     Integer(Kind=wi)                  :: N_species
     Logical                           :: reload_trajectory
     Type(in_string),      Public      :: ensemble
+    Type(coord_distrib_type), Public  :: coord_distrib
   Contains
     Private
       Procedure         :: alloc_trajectory  => allocate_trajectory_arrays
@@ -488,15 +509,16 @@ Contains
     ! author    - i.scivetti Jan 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(file_type),   Intent(InOut) :: files(:)
-    Type(model_type),  Intent(InOut) :: model_data
+    Type(model_type),  Intent(In   ) :: model_data
     Type(traj_type),   Intent(InOut) :: traj_data
   
     Character(Len=256)  :: message
+    Logical             :: flag_inter_geo_stat
 
     If (model_data%config%monitored_species%fread .And. model_data%species_definition%compute_amount%stat) Then
       Call compute_number_monitored_species(traj_data, model_data)
     End If
-    
+
     If(model_data%change_chemistry%stat) Then 
       Call print_tracking_species(files, traj_data, model_data)
       If (traj_data%lifetime%invoke%fread) Then 
@@ -513,6 +535,10 @@ Contains
       Call mean_squared_displacement(files, traj_data, model_data)
     End If
 
+    If (traj_data%coord_distrib%invoke%fread) Then
+      Call coordinate_distribution(files, traj_data, model_data)
+    End If
+
     If (traj_data%rdf%invoke%fread) Then
       Call radial_distribution_function(files, traj_data, model_data)
     End If
@@ -521,6 +547,38 @@ Contains
       Call print_unchanged_chemistry(files, traj_data)
     End If
 
+    If (model_data%nndist%invoke%fread) Then
+      Call compute_shortest_distance_distribution(files, traj_data, model_data)
+    End If
+    
+    If (model_data%species_definition%intra_geom%invoke%fread) Then
+      If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
+        Call obtain_intramol_geom_stat(files, traj_data, model_data%species_definition%atoms_per_species,&
+                                    & model_data%species_definition%intra_geom%dist)
+      End If
+      If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
+        Call obtain_intramol_geom_stat(files, traj_data, model_data%species_definition%atoms_per_species,&
+                                    & model_data%species_definition%intra_geom%angle)
+      End If
+    End If
+
+    If (model_data%species_definition%inter_geom%invoke%fread) Then
+      Call find_neighbours_monitored_species(traj_data, flag_inter_geo_stat)
+      If (model_data%species_definition%inter_geom%dist%invoke%fread .And. flag_inter_geo_stat)  Then
+        Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%dist, 1)
+        Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%dist, 2)
+        Write (message,'(1x,a)') 'The probability distribution of the intermolecular distances were printed to files "'&
+                                &//Trim(files(FILE_INTERMOL_DISTANCES_NN1)%filename)//'" and "'&
+                                &//Trim(files(FILE_INTERMOL_DISTANCES_NN2)%filename)//'"'
+        Call info(message, 1)
+        Write (message,'(1x,a)') 'which separetely consider the first and the second nearest monitored species, respectively.'
+        Call info(message, 1)
+      End If
+      If (model_data%species_definition%inter_geom%angle%invoke%fread .And. flag_inter_geo_stat) Then
+        Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%angle)
+      End If
+    End If
+    
     If (Trim(traj_data%ensemble%type)/='nve') Then
       If (traj_data%lifetime%invoke%fread .Or.&
           traj_data%ocf%invoke%fread      .Or.&
@@ -542,6 +600,595 @@ Contains
     
   End Subroutine trajectory_analysis
 
+  Subroutine find_neighbours_monitored_species(traj_data, flag_exec)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the two closest monitored species to a
+    ! monitored species
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(traj_type), Intent(InOut)  :: traj_data
+    Logical,         Intent(  Out)  :: flag_exec    
+
+    Integer(Kind=wi)  :: accum, net_frames
+    Integer(Kind=wi)  :: i, j, k, mk, indx1, indx2, mindx1, mindx2
+    
+    Character(Len=256) :: messages(3)
+    Logical            :: flag, flag1, flag2
+
+    Real(Kind=wp)  :: min_dist1, min_dist2, u(3)
+    Logical        :: modified
+    
+    net_frames=0
+    Do i = traj_data%analysis%frame_ini, traj_data%frames
+      accum=0
+      Do  j= 1, traj_data%Nmax_species
+        min_dist1 = Huge(1.0_wp)
+        min_dist2 = Huge(1.0_wp)
+        If (traj_data%region%define%fread) Then
+          mk=traj_data%species(i,j)%list(1)
+          Call within_region(traj_data, i, mk, flag)
+        Else
+          flag=.True.
+        End If
+
+        If (traj_data%species(i,j)%alive .And. flag) Then
+          accum=accum+1
+          indx1=traj_data%species(i,j)%list(1)
+          mindx1=indx1
+          mindx2=indx1
+          Do  k= 1, traj_data%Nmax_species
+            If (k /= j) Then  
+              indx2= traj_data%species(i,k)%list(1)
+              u= traj_data%config(i,indx2)%r-traj_data%config(i,indx1)%r
+              Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+              flag1= norm2(u) < min_dist1
+              flag2= norm2(u) < min_dist2
+              
+              If (flag1 .And. flag2) Then
+                min_dist2=min_dist1
+                mindx2=mindx1
+                min_dist1=norm2(u)
+                mindx1=indx2
+              Else If ((.Not. flag1) .And. flag2) Then
+                min_dist2=norm2(u)
+                mindx2=indx2
+              End If
+            End If  
+          End Do
+          traj_data%species(i,j)%nn(1)=mindx1
+          traj_data%species(i,j)%nn(2)=mindx2
+        End If
+      End Do
+      If (accum > 2 ) Then
+        net_frames=net_frames+1
+      End If
+    End Do
+    
+    If (net_frames==0) Then
+      Write (messages(1),'(1x,a)') '*************************************************************************************'
+      Call info(messages, 1)
+      Write (messages(1),'(1x,a)') '   WARNING: it looks the system has two or less monitored species along the trajectory (!?)'
+      Write (messages(2),'(1x,a)') '   The intermolecular analysis of geometry parameters will not be executed.' 
+      Write (messages(3),'(1x,a)') '   Please review the systems and the settings.'                        
+      Call info(messages, 3)
+      Write (messages(1),'(1x,a)') '************************************************************************************'
+      Call info(messages, 1)
+      flag_exec=.False.
+    Else
+      flag_exec=.True.
+    End If
+    
+  End Subroutine find_neighbours_monitored_species 
+
+  Subroutine compute_shortest_distance_distribution(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the statistics of the shortest distance
+    ! between selected species. Analysis is performed using the definitions
+    ! of the &shortest_pair block
+    !
+    ! author    - i.scivetti Nov 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),        Intent(InOut) :: files(:)
+    Type(traj_type),        Intent(InOut) :: traj_data
+    Type(model_type),       Intent(In   ) :: model_data
+
+    Integer(Kind=wi)  :: nbins, num_var, net_frames, accum
+    Integer(Kind=wi)  :: fail(2) 
+
+    Integer(Kind=wi)  :: i, j, k, mk
+    Integer(Kind=wi)  :: num_at(2), indx(2)
+    Integer(Kind=wi)  :: list_indx(model_data%config%num_atoms,2)
+    
+    Integer(Kind=wi)  :: iunit
+    
+    Character(Len=256) :: messages(2), message
+    Logical            :: falloc, flag, flag1, flag2, found
+
+    Integer(Kind=wi), Allocatable  :: h(:)
+    Real(Kind=wp),    Allocatable  :: d(:)
+ 
+    Real(Kind=wp)  :: rj(3), rk(3), rjk(3)
+    Real(Kind=wp)  :: rmin
+    Logical        :: modified
+    
+    ! Define number of bins
+    nbins=Floor(Abs(model_data%nndist%upper_bound%value-model_data%nndist%lower_bound%value)/model_data%nndist%delta%value)
+    
+    !Allocate arrays
+    Allocate(h(nbins),  Stat=fail(1))
+    Allocate(d(nbins),  Stat=fail(2))
+    If (Any(fail > 0)) Then
+      Write (message,'(1x,1a)') '***ERROR: Allocation problems for obtaining the statistics&
+                                & of the shortest distances. Analysis will not be executed.'
+      Call info(message, 1)                          
+      falloc=.False.
+    Else
+      falloc=.True.
+    End If
+ 
+    If (falloc) Then
+      d=0.0_wp
+      ! Initiate Accumulators
+      accum=0
+      net_frames=0
+
+      ! Compute the histogram for the selected coordinate of the selected species
+      Do i = traj_data%analysis%frame_ini, traj_data%frames
+        h=0
+        num_var=0
+        num_at=0
+        list_indx=0
+        Do j = 1, model_data%config%num_atoms
+          If (Trim(model_data%nndist%species(1))==Trim(traj_data%config(i,j)%tag)) Then
+              num_at(1)=num_at(1)+1
+              list_indx(num_at(1),1)=j
+          Else If (Trim(model_data%nndist%species(2))==Trim(traj_data%config(i,j)%tag)) Then
+              num_at(2)=num_at(2)+1
+              list_indx(num_at(2),2)=j
+          End If
+
+        End Do
+          
+        If (num_at(1) <= num_at(2))Then 
+           indx(1)=1
+           indx(2)=2
+        Else
+           indx(1)=2
+           indx(2)=1
+        End If
+        
+        If (num_at(indx(1)) /= 0 .And. num_at(indx(2)) /=0) Then
+          Do j = 1, num_at(indx(1))
+            rj=traj_data%config(i,list_indx(j,indx(1)))%r
+            rmin=Huge(1.0_wp)
+            found=.False.
+            Do k= 1, num_at(indx(2))
+              rk=traj_data%config(i,list_indx(k,indx(2)))%r
+              If (traj_data%region%define%fread) Then
+                Call within_region(traj_data, i, list_indx(j,indx(1)), flag1)
+                Call within_region(traj_data, i, list_indx(k,indx(2)), flag2)
+                If (flag1 .Or. flag2) Then
+                  flag=.True.
+                Else
+                  flag=.False. 
+                End If
+              Else
+                 flag=.True.
+              End If   
+              If (flag) Then
+                rjk=rj-rk
+                Call check_PBC(rjk, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                If (norm2(rjk) < rmin) Then
+                  found=.True.
+                  rmin=norm2(rjk)
+                End If
+              End If
+            End Do
+            If (found) Then
+              If (rmin >= model_data%nndist%lower_bound%value .And. rmin <= model_data%nndist%upper_bound%value) Then
+                mk=Floor((rmin-model_data%nndist%lower_bound%value)/model_data%nndist%delta%value)+1
+                If (mk <= nbins) Then
+                  h(mk)=h(mk)+1
+                  num_var=num_var+1
+                End If
+              End If
+            End If           
+          End Do
+        End If
+        
+        If(num_var /= 0) Then
+          accum=accum+num_var
+          ! Count net frame
+          net_frames=net_frames+1
+          ! Normalise
+          Do mk= 1, nbins 
+            d(mk)= d(mk)+Real(h(mk),Kind=wp)/num_var
+          End Do
+        End If
+        
+      End Do
+      
+      
+      ! Print results
+      If (accum /= 0) Then
+         Do mk=1, nbins 
+           d(mk)=d(mk)/net_frames/model_data%nndist%delta%value
+         End Do
+       
+        ! Print File
+        Open(Newunit=files(FILE_SHORTEST_PAIR)%unit_no, File=files(FILE_SHORTEST_PAIR)%filename,&
+                          &Status='Replace')
+        iunit=files(FILE_SHORTEST_PAIR)%unit_no
+        Write (iunit,'(a)') '#  Probability distribution of the shortest distance between&
+                           & "'//Trim(model_data%nndist%species(1))//'" and "'//Trim(model_data%nndist%species(2))//'"'    
+        Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+        Do mk=1, nbins
+          Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*model_data%nndist%delta%value+&
+                                            & model_data%nndist%lower_bound%value, d(mk)
+        End Do
+        Write (message,'(1x,a)') 'The probability distribution of the shortest distance for the pair defined in &shortest_pair&
+                                  & was printed to the "'//Trim(files(FILE_SHORTEST_PAIR)%filename)//'" file.'
+        Call info(message, 1)
+
+      Else
+        Write (messages(1),'(1x,a)')   '*************************************************************************************'
+        Call info(messages, 1)
+        Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intermolecular geometry could not be executed'
+          Write (messages(2),'(1x,a)') '   Please verify the settings for the &shortest_pair'                        
+        Call info(messages, 2)
+        Write (messages(1),'(1x,a)')   '************************************************************************************'
+        Call info(messages, 1)
+       End If
+      
+      ! Deallocate arrays   
+      Deallocate(d,h)
+    End If
+    
+  End Subroutine compute_shortest_distance_distribution
+
+  Subroutine obtain_intermol_geom_stat(files, traj_data, M, num_nn)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the statistics of geometrical
+    ! parameters (distance and angles) between three closest monitored
+    ! species, with the criteria defined in the &intermol_stat_settings
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),            Intent(InOut)  :: files(:)
+    Type(traj_type),            Intent(InOut)  :: traj_data
+    Type(geo_param_type),       Intent(In   )  :: M
+    Integer(Kind=wi), Optional, Intent(In   )  :: num_nn
+
+    Integer(Kind=wi)  :: nbins, num_var, net_frames, accum
+    Integer(Kind=wi)  :: fail(2) 
+
+    Integer(Kind=wi)  :: i, j, k, k1, k2, mk
+    Integer(Kind=wi)  :: iunit
+    
+    Character(Len=256) :: messages(2), message
+    Logical            :: falloc, flag
+
+    Integer(Kind=wi), Allocatable  :: h(:)
+    Real(Kind=wp),    Allocatable  :: d(:)
+ 
+    Real(Kind=wp)  :: u(3), u2(3), angle 
+    Logical        :: modified
+    
+    ! Define number of bins
+    nbins=Floor(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
+    
+    !Allocate arrays
+    Allocate(h(nbins),  Stat=fail(1))
+    Allocate(d(nbins),  Stat=fail(2))
+    If (Any(fail > 0)) Then
+      Write (message,'(1x,1a)') '***ERROR: Allocation problems for obtaining geometry statistics&
+                                & of monitored species. Analysis will not be executed.'
+      Call info(message, 1)                          
+      falloc=.False.
+    Else
+      falloc=.True.
+    End If
+ 
+    If (falloc) Then
+      d=0.0_wp
+      ! Initiate Accumulators
+      accum=0
+      net_frames=0
+      
+      ! Compute the histogram for the selected coordinate of the selected species
+      Do i = traj_data%analysis%frame_ini, traj_data%frames
+        h=0
+        num_var=0
+        Do  j= 1, traj_data%Nmax_species
+          If (traj_data%region%define%fread) Then
+            mk=traj_data%species(i,j)%list(1)
+            Call within_region(traj_data, i, mk, flag)
+          Else
+            flag=.True.
+          End If
+
+          If (traj_data%species(i,j)%alive .And. flag) Then
+            If (Trim(M%invoke%type) == '&distance_parameters') Then
+              k=traj_data%species(i,j)%list(1)
+              k2=traj_data%species(i,j)%nn(num_nn)
+              u=traj_data%config(i,k2)%r-traj_data%config(i,k)%r          
+              Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+              If (norm2(u) >= M%lower_bound%value .And. norm2(u) <= M%upper_bound%value) Then
+                mk=Floor((norm2(u)-M%lower_bound%value)/M%delta%value)+1
+                If (mk <= nbins) Then
+                  h(mk)=h(mk)+1
+                  num_var=num_var+1
+                End If
+              End If
+            Else If (Trim(M%invoke%type) == '&angle_parameters') Then
+              k=traj_data%species(i,j)%list(1)
+              k1=traj_data%species(i,j)%nn(1)
+              k2=traj_data%species(i,j)%nn(2)
+              u =traj_data%config(i,k1)%r-traj_data%config(i,k)%r
+              u2=traj_data%config(i,k2)%r-traj_data%config(i,k)%r
+              Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+              Call check_PBC(u2, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+              angle=Acos((u(1)*u2(1)+u(2)*u2(2)+u(3)*u2(3))/norm2(u)/norm2(u2))*Rads_to_degrees
+              If (angle >= M%lower_bound%value .And. angle <= M%upper_bound%value) Then
+                mk=Floor((angle-M%lower_bound%value)/M%delta%value)+1
+                If (mk <= nbins) Then
+                  h(mk)=h(mk)+1
+                  num_var=num_var+1
+                End If
+              End If
+            End If
+          End If
+        End Do
+
+        If(num_var /= 0) Then
+          accum=accum+num_var
+          ! Count net frame
+          net_frames=net_frames+1
+          ! Normalise
+          Do mk= 1, nbins 
+            d(mk)= d(mk)+Real(h(mk),Kind=wp)/num_var
+          End Do
+        End If
+      End Do
+
+      ! Print results
+      If (accum /= 0) Then
+         Do mk=1, nbins 
+           d(mk)=d(mk)/net_frames/M%delta%value
+         End Do
+       
+        ! Print File
+        If (Trim(M%invoke%type) == '&distance_parameters') Then
+          If (num_nn == 1) Then
+            Open(Newunit=files(FILE_INTERMOL_DISTANCES_NN1)%unit_no, File=files(FILE_INTERMOL_DISTANCES_NN1)%filename,&
+                              &Status='Replace')
+            iunit=files(FILE_INTERMOL_DISTANCES_NN1)%unit_no
+            Write (iunit,'(a)') '#  Probability distribution of the intermolecular distances&
+                               & using only the first nearest monitored species and the settings of '//Trim(M%invoke%type)  
+            Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+          Else If (num_nn == 2) Then
+            Open(Newunit=files(FILE_INTERMOL_DISTANCES_NN2)%unit_no, File=files(FILE_INTERMOL_DISTANCES_NN2)%filename,&
+                              &Status='Replace')
+            iunit=files(FILE_INTERMOL_DISTANCES_NN2)%unit_no
+            Write (iunit,'(a)') '#  Probability distribution of the intermolecular distances&
+                               & using only the second nearest monitored species and the settings of '//Trim(M%invoke%type)  
+            Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+          End If
+        Else If (Trim(M%invoke%type) == '&angle_parameters') Then
+          Open(Newunit=files(FILE_INTERMOL_ANGLES)%unit_no, File=files(FILE_INTERMOL_ANGLES)%filename, Status='Replace')
+          iunit=files(FILE_INTERMOL_ANGLES)%unit_no
+          Write (iunit,'(a)') '#  Probability distribution of the intermolecular angles using the settings of '//Trim(M%invoke%type)  
+          Write (iunit,'(a)') '#  Value [Degrees]      Probability [1/Degrees]' 
+          Write (message,'(1x,a)') 'The probability distribution of the intermolecular angles was printed to the "'&
+                                  &//Trim(files(FILE_INTERMOL_ANGLES)%filename)//'" file.'
+          Call info(message, 1)
+        End If
+          Do mk=1, nbins
+            Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
+          End Do
+      Else
+        Write (messages(1),'(1x,a)')   '*************************************************************************************'
+        Call info(messages, 1)
+        Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intermolecular geometry could not be executed'
+          Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intermol_stat_settings'                        
+        Call info(messages, 2)
+        Write (messages(1),'(1x,a)')   '************************************************************************************'
+        Call info(messages, 1)
+      End If
+      
+      ! Deallocate arrays   
+      Deallocate(d,h)
+    End If
+    
+  End Subroutine obtain_intermol_geom_stat
+
+  
+  Subroutine obtain_intramol_geom_stat(files, traj_data, atoms_per_species, M)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the statistics of internal geometrical
+    ! parameters (distance and angles) for monitored species 
+    ! as defined in the &intramol_stat_settings
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),      Intent(InOut)  :: files(:)
+    Type(traj_type),      Intent(InOut)  :: traj_data
+    Integer(Kind=wi),     Intent(In   )  :: atoms_per_species
+    Type(geo_param_type), Intent(In   )  :: M
+
+    Integer(Kind=wi)  :: nbins, num_var, net_frames, accum
+    Integer(Kind=wi)  :: fail(2) 
+
+    Integer(Kind=wi)  :: i, j, k1, k2, k3, mk, l, l1, l2
+    Integer(Kind=wi)  :: ni(3), nj(2)
+    Integer(Kind=wi)  :: iunit
+    
+    Character(Len=256) :: messages(2), message
+    Logical           :: falloc, flag, flag1, flag2
+
+    Integer(Kind=wi), Allocatable  :: h(:)
+    Real(Kind=wp),    Allocatable  :: d(:)
+ 
+    Real(Kind=wp)  :: u(3), u2(3), angle 
+    Logical        :: modified
+    
+    ! Define number of bins
+    nbins=Floor(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
+    
+    !Allocate arrays
+    Allocate(h(nbins),  Stat=fail(1))
+    Allocate(d(nbins),  Stat=fail(2))
+    If (Any(fail > 0)) Then
+      Write (message,'(1x,1a)') '***ERROR: Allocation problems for obtaining geometry statistics&
+                                & of monitored species. Analysis will not be executed.'
+      Call info(message, 1)                          
+      falloc=.False.
+    Else
+      falloc=.True.
+    End If
+ 
+    If (falloc) Then
+      d=0.0_wp
+      ! Initiate Accumulators
+      accum=0
+      net_frames=0
+      
+      ! Compute the histogram for the selected coordinate of the selected species
+      Do i = traj_data%analysis%frame_ini, traj_data%frames
+        h=0
+        num_var=0
+        Do  j= 1, traj_data%Nmax_species
+          If (traj_data%region%define%fread) Then
+            mk=traj_data%species(i,j)%list(1)
+            Call within_region(traj_data, i, mk, flag)
+          Else
+            flag=.True.
+          End If
+
+          If (traj_data%species(i,j)%alive .And. flag) Then
+            If (Trim(M%invoke%type) == '&distance_parameters') Then 
+              Do k1= 1, atoms_per_species
+                ni(1)=traj_data%species(i,j)%list(k1)
+                Do k2= k1+1, atoms_per_species
+                  ni(2)=traj_data%species(i,j)%list(k2)
+                  flag1=(Trim(traj_data%config(i,ni(1))%element)==Trim(M%species(1))) .And.&
+                        (Trim(traj_data%config(i,ni(2))%element)==Trim(M%species(2)))
+                  flag2=(Trim(traj_data%config(i,ni(1))%element)==Trim(M%species(2))) .And.&
+                        (Trim(traj_data%config(i,ni(2))%element)==Trim(M%species(1)))      
+                  If (flag1 .Or. flag2) Then
+                    u=traj_data%config(i,ni(1))%r-traj_data%config(i,ni(2))%r          
+                    Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                    If (norm2(u) >= M%lower_bound%value .And. norm2(u) <= M%upper_bound%value) Then
+                      mk=Floor((norm2(u)-M%lower_bound%value)/M%delta%value)+1
+                      If (mk <= nbins) Then
+                        h(mk)=h(mk)+1
+                        num_var=num_var+1
+                      End If
+                    End If
+                  End If
+                End Do
+              End Do
+              
+            Else If (Trim(M%invoke%type) == '&angle_parameters') Then
+              Do k1= 1, atoms_per_species
+                ni(1)=traj_data%species(i,j)%list(k1)
+                Do k2= k1+1, atoms_per_species
+                  ni(2)=traj_data%species(i,j)%list(k2)
+                  Do k3= k2+1, atoms_per_species
+                    ni(3)=traj_data%species(i,j)%list(k3)
+                    Do l= 1, 3
+                      If (Trim(traj_data%config(i,ni(l))%element)==Trim(M%species(2))) Then
+                        Do l1= 1, atoms_per_species
+                          nj(1)=traj_data%species(i,j)%list(l1)
+                          Do l2= l1+1, atoms_per_species
+                            nj(2)=traj_data%species(i,j)%list(l2)
+                            If (l1 /= l .And. l2 /= l) Then
+                              flag1=(Trim(traj_data%config(i,nj(1))%element)==Trim(M%species(1))) .And.&
+                                    (Trim(traj_data%config(i,nj(2))%element)==Trim(M%species(3)))
+                              flag2=(Trim(traj_data%config(i,nj(1))%element)==Trim(M%species(3))) .And.&
+                                    (Trim(traj_data%config(i,nj(2))%element)==Trim(M%species(1)))
+                              If (flag1 .Or. flag2) Then
+                                u =traj_data%config(i,nj(1))%r-traj_data%config(i,ni(l))%r
+                                u2=traj_data%config(i,nj(2))%r-traj_data%config(i,ni(l))%r
+                                Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                                Call check_PBC(u2, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                                angle=Acos((u(1)*u2(1)+u(2)*u2(2)+u(3)*u2(3))/norm2(u)/norm2(u2))*Rads_to_degrees
+                                If (angle >= M%lower_bound%value .And. angle <= M%upper_bound%value) Then
+                                  mk=Floor((angle-M%lower_bound%value)/M%delta%value)+1
+                                  If (mk <= nbins) Then
+                                    h(mk)=h(mk)+1
+                                    num_var=num_var+1
+                                  End If
+                                End If
+                              End If
+                            End If
+                          End Do
+                        End Do
+                      End If
+                    End Do  
+                  End Do
+                End Do
+              End Do
+            End If
+          End If
+        End Do
+
+        If(num_var /= 0) Then
+          accum=accum+num_var
+          ! Count net frame
+          net_frames=net_frames+1
+          ! Normalise
+          Do mk= 1, nbins 
+            d(mk)= d(mk)+Real(h(mk),Kind=wp)/num_var
+          End Do
+        End If
+      End Do
+
+      ! Print results
+      If (accum /= 0) Then
+        Do mk=1, nbins 
+          d(mk)=d(mk)/net_frames/M%delta%value
+        End Do
+      
+        ! Print File
+        If (Trim(M%invoke%type) == '&distance_parameters') Then
+          Open(Newunit=files(FILE_INTRAMOL_DISTANCES)%unit_no, File=files(FILE_INTRAMOL_DISTANCES)%filename, Status='Replace')
+          iunit=files(FILE_INTRAMOL_DISTANCES)%unit_no
+          Write (iunit,'(a)') '#  Probability distribution of the intramolecular distances&
+                             & using the settings of '//Trim(M%invoke%type)  
+          Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+          Write (message,'(1x,a)') 'The probability distribution of the intramolecular distances was printed to the "'&
+                                  &//Trim(files(FILE_INTRAMOL_DISTANCES)%filename)//'" file.'
+          Call info(message, 1)
+        Else If (Trim(M%invoke%type) == '&angle_parameters') Then
+          Open(Newunit=files(FILE_INTRAMOL_ANGLES)%unit_no, File=files(FILE_INTRAMOL_ANGLES)%filename, Status='Replace')
+          iunit=files(FILE_INTRAMOL_ANGLES)%unit_no
+          Write (iunit,'(a)') '#  Probability distribution of the intramolecular angles using the settings of '//Trim(M%invoke%type)  
+          Write (iunit,'(a)') '#  Value [Degrees]      Probability [1/Degrees]' 
+          Write (message,'(1x,a)') 'The probability distribution of the intramolecular angles was printed to the "'&
+                                  &//Trim(files(FILE_INTRAMOL_ANGLES)%filename)//'" file.'
+          Call info(message, 1)
+        End If
+          Do mk=1, nbins
+            Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
+          End Do
+      Else
+        Write (messages(1),'(1x,a)')   '*************************************************************************************'
+        Call info(messages, 1)
+        Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intramolecular geometry could not be executed'
+          Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intramol_stat_settings'                        
+        Call info(messages, 2)
+        Write (messages(1),'(1x,a)')   '************************************************************************************'
+        Call info(messages, 1)
+      End If
+      
+      ! Deallocate arrays   
+      Deallocate(d,h)
+    End If
+
+  End Subroutine obtain_intramol_geom_stat
+  
   Subroutine residence_percentage(traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to compute the residence percentage of changing chemistry 
@@ -605,7 +1252,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(file_type),   Intent(InOut) :: files(:)
     Type(traj_type),   Intent(InOut) :: traj_data
-    Type(model_type),  Intent(InOut) :: model_data
+    Type(model_type),  Intent(In   ) :: model_data
   
     Integer(Kind=wi)   :: iunit, i, l 
     Character(Len=256) :: num_species
@@ -704,7 +1351,7 @@ Contains
     ! author    - i.scivetti June 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(traj_type),   Intent(InOut) :: traj_data
-    Type(model_type),  Intent(InOut) :: model_data
+    Type(model_type),  Intent(In   ) :: model_data
 
     Integer(Kind=wi)  :: i, j
     Integer(Kind=wi)  :: num_at_a, net_frames
@@ -772,7 +1419,169 @@ Contains
     Call info(' ', 1)
     
   End Subroutine compute_number_monitored_species
-  
+
+  Subroutine coordinate_distribution(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the distribution of the coordinates (x, y or z) of
+    ! the species selected in the &coord_distrib block
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),   Intent(InOut) :: files(:)
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+
+    Integer(Kind=wi)  :: i, j, m, iunit, indx_ini
+    Integer(Kind=wi)  :: num_at, nbins, net_frames
+    Integer(Kind=wi)  :: accum
+    
+    Real(Kind=wp)     :: clim(2), coord_value
+    Real(Kind=wp)     :: vector(3) 
+
+    Integer(Kind=wi)  :: list_indx(model_data%config%num_atoms)
+    
+    Character(Len=256) :: ctap
+    
+    Character(Len=256) :: messages(3), message
+    Logical            :: falloc
+
+    Character(Len=256) :: type_error
+    Integer(Kind=wi)   :: fail(2)  
+    
+    Integer(Kind=wi), Allocatable  :: h(:)
+    Real(Kind=wp),    Allocatable  :: d(:)
+    
+    ! Search for the value of cmax and cmin 
+    indx_ini=traj_data%analysis%frame_ini
+    vector=0.0_wp
+    Do i = 1, 3
+      vector(:)=vector(:)+traj_data%box(indx_ini)%cell(i,:)
+    End Do
+    If (vector(traj_data%coord_distrib%indx) > 0.0_wp) Then
+      clim(2)=vector(traj_data%coord_distrib%indx)
+      clim(1)=0.0_wp
+      ctap='top'
+    Else
+      clim(1)=vector(traj_data%coord_distrib%indx) 
+      clim(2)=0.0_wp 
+      ctap='bottom'
+    End If
+    
+    Do i = traj_data%analysis%frame_ini+1, traj_data%frames
+      vector=0.0_wp
+      Do j = 1, 3
+        vector(:)=vector(:)+traj_data%box(i)%cell(j,:)
+      End Do
+      If (Trim(ctap)=='bottom') Then
+        If (vector(traj_data%coord_distrib%indx) < clim(1)) Then
+          clim(1)=vector(traj_data%coord_distrib%indx)
+        End If
+      Else If (Trim(ctap)=='top') Then
+        If (vector(traj_data%coord_distrib%indx) > clim(2)) Then
+          clim(2)=vector(traj_data%coord_distrib%indx)
+        End If
+      End If
+    End Do
+     
+    ! Define number of bins
+    nbins=Floor(Abs(clim(1)-clim(2))/traj_data%coord_distrib%delta%value)
+
+    !Allocate arrays
+    Allocate(h(nbins),  Stat=fail(1))
+    Allocate(d(nbins),  Stat=fail(2))
+    If (Any(fail > 0)) Then
+      Write (message,'(1x,1a)') '***ERROR: Allocation problems for coordinate distribution.&
+                                & Analysis will not be executed.'
+      falloc=.False.
+    Else
+      falloc=.True.
+    End If
+     
+    If (falloc) Then
+      d=0.0_wp
+      ! Initiate Accumulators
+      accum=0
+      net_frames=0
+      
+      ! Compute the histogram for the selected coordinate of the selected species
+      Do i = traj_data%analysis%frame_ini, traj_data%frames
+        ! Define the number and list of indexes
+        num_at=0
+        list_indx=0
+        Do j = 1, model_data%config%num_atoms
+          If (Trim(traj_data%coord_distrib%species)==Trim(traj_data%config(i,j)%tag)) Then
+            num_at=num_at+1
+            list_indx(num_at)=j
+          End If
+        End Do
+      
+        ! Calculate the histogram for this particular frame of the trajectory
+        If (num_at/=0) Then
+          h=0
+          Do j=1, num_at
+            coord_value=Abs(traj_data%config(i,list_indx(j))%r(traj_data%coord_distrib%indx))
+            If (Trim(ctap)=='top') Then
+              m=Floor(coord_value/traj_data%coord_distrib%delta%value)+1
+            Else
+              m=nbins+1-(Floor(coord_value/traj_data%coord_distrib%delta%value)+1)
+            End If
+            If (m <= nbins) Then
+              h(m)=h(m)+1
+            End If
+          End Do 
+          ! Count net frame
+          net_frames=net_frames+1
+          ! Normalise
+          Do m=1, nbins 
+            d(m)= d(m)+Real(h(m),Kind=wp)/num_at
+          End Do
+        End If
+        accum=accum+num_at
+      End Do
+
+      Do m=1, nbins 
+        d(m)=d(m)/net_frames/traj_data%coord_distrib%delta%value      
+      End Do
+      
+      ! Print results
+      If (accum /= 0) Then
+        ! Print File
+        Open(Newunit=files(FILE_COORD_DISTRIB)%unit_no, File=files(FILE_COORD_DISTRIB)%filename, Status='Replace')
+        iunit=files(FILE_COORD_DISTRIB)%unit_no
+        Write (iunit,'(a)') '#  Distribution of the '//Trim(traj_data%coord_distrib%coordinate%type)//'-coordinate&
+                           & for the "'//Trim(traj_data%coord_distrib%species)//'" species'
+        Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+        
+        Do m=1, nbins
+          Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(m,Kind=wp)-0.5)*traj_data%coord_distrib%delta%value, d(m)
+        End Do
+        Write (message,'(1x,a)') 'The distribution of the '//Trim(traj_data%coord_distrib%coordinate%type)//&
+                                &'-coordinate& for the "'//Trim(traj_data%coord_distrib%species)//'" species was&
+                                & printed to the "'//Trim(files(FILE_COORD_DISTRIB)%filename)//'" file.'
+        Call info(message, 1)
+      Else
+        type_error=Trim(traj_data%coord_distrib%species)
+        Write (messages(1),'(1x,a)') '*************************************************************************************'
+        Call info(messages, 1)
+        Write (messages(1),'(1x,a)') '   WARNING: RDF analysis could not be executed'
+          Write (messages(2),'(1x,a)') '   Requested species '//Trim(type_error)//' as specified in the &coord_distrib&
+                                  & block could not be identified along the trajectory.'
+          Write (messages(3),'(1x,a)') '   Please verify the settings for the &coord_distrib block. The user should also&
+                                & look at the file '//Trim(files(FILE_TAGGED_TRAJ)%filename)                        
+        Call info(messages, 3)
+        Write (messages(1),'(1x,a)') '************************************************************************************'
+        Call info(messages, 1)
+      End If
+      
+      ! Close file
+      Close(iunit)
+      ! Deallocate arrays   
+      Deallocate(d,h)
+   End If
+    
+  End Subroutine coordinate_distribution
+
+
   Subroutine radial_distribution_function(files, traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to compute the Mean Squared Displacement (MSD) based on the
@@ -782,7 +1591,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(file_type),   Intent(InOut) :: files(:)
     Type(traj_type),   Intent(InOut) :: traj_data
-    Type(model_type),  Intent(InOut) :: model_data
+    Type(model_type),  Intent(In   ) :: model_data
 
     Integer(Kind=wi)  :: i, j, k, m, iunit, indx_a, indx_b
     Integer(Kind=wi)  :: num_at_a, num_at_b, nbins, net_frames
@@ -806,8 +1615,8 @@ Contains
     Real(Kind=wp),    Allocatable  :: cn(:)
     
     ! Search for the value of rmax 
+    rmax=-Huge(1.0_wp)
     Do i = traj_data%analysis%frame_ini, traj_data%frames
-      rmax=-Huge(1.0_wp)
       Do j = 1, 3
         If (traj_data%box(i)%cell_length(j) > rmax) Then
            rmax = traj_data%box(i)%cell_length(j)
@@ -829,6 +1638,7 @@ Contains
     Allocate(cn(nbins), Stat=fail(4))
     If (Any(fail > 0)) Then
       Write (message,'(1x,1a)') '***ERROR: Allocation problems for RDF arrays. RDF analysis will not be executed.'
+      Call info(message, 1)  
       falloc=.False.
     Else
       falloc=.True.
@@ -1510,7 +2320,15 @@ Contains
         Else
           maximum=average+std
         End If
-        minimum=average-std
+        If (Trim(what)=='TCF')Then
+          If((average-std) < 0.0_wp) Then
+            minimum=0.0_wp
+          Else
+            minimum=average-std
+          End If
+        Else
+          minimum=average-std
+        End If
         Write(iunit,'(5(f10.3, 3x))') (i-1)*traj_data%timestep%value/1000.0_wp, average, maximum, minimum, std
       End If
       i=i+1
@@ -1614,9 +2432,9 @@ Contains
           set_u0=.True.
           If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
             If (k /= traj_data%analysis%N_seg) Then
-              Write (iunit,*) ' '
-              Write (iunit,'(a)') '# Reseting the OCF analysis....' 
-              Write (iunit,'(a)') '#  Time (ps)           OCF' 
+             Write (iunit,*) ' '
+             Write (iunit,'(a)') '# Reseting the OCF analysis....' 
+             Write (iunit,'(a)') '#  Time (ps)           OCF' 
             End If
           End If                      
         Else
@@ -1918,6 +2736,11 @@ Contains
       Call check_rdf(files, traj_data, model_data)
     End If 
 
+    ! Check info &coord_distrib block 
+    If (traj_data%coord_distrib%invoke%fread) Then
+      Call check_coord_distrib(files, traj_data, model_data)
+    End If 
+    
     ! Check info &track_unchanged_chemistry block 
     If (traj_data%unchanged%invoke%fread) Then
       Call check_unchanged_chemistry(files, traj_data, model_data)
@@ -2274,6 +3097,120 @@ Contains
     
   End Subroutine check_rdf
 
+  Subroutine check_coord_distrib(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check the settings of the &coord_distrib block
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),    Intent(In   ) :: files(:)
+    Type(traj_type),    Intent(InOut) :: traj_data
+    Type(model_type),   Intent(In   ) :: model_data
+
+    Character(Len=256)  :: messages(2)
+    Character(Len=64 )  :: error_set
+    Integer(Kind=wi)    :: j
+    Logical             :: flag
+
+    Character(Len=8)  :: tg
+    Character(Len=8)  :: coord(3)
+    
+    ! Define coordinates to check directive "coordinate"
+    coord(1)='x'
+    coord(2)='y'
+    coord(3)='z'
+    
+    error_set = '***ERROR in the &coord_distrib block of file '//Trim(files(FILE_SET)%filename)//' -'
+
+    If (.Not. traj_data%coord_distrib%delta%fread) Then
+      traj_data%coord_distrib%delta%tag='delta'
+    End If
+    Call check_length_directive(traj_data%coord_distrib%delta, error_set, .True., 'directive')
+
+    ! Check definition of "species" directive
+    If (traj_data%coord_distrib%species_dir%fread) Then
+      If (traj_data%coord_distrib%species_dir%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Wrong (or missing) settings for the "species" directive.'
+        Call info(messages, 1)
+        Call error_stop(' ')
+      End If
+    Else
+      Write (messages(1),'(2(1x,a))') Trim(error_set), 'The user must define the "species" directive to&
+                                    & compute the coordinate distribution.&
+                                    & Check if the other directives have been defined correctly'
+      Call info(messages, 1)
+      Call error_stop(' ')
+    End If
+    
+   ! Check if the definition of "species" is valid
+    tg=Trim(traj_data%coord_distrib%species)
+    Call remove_symbols(tg,'*')
+    flag=.True.
+    j=1
+    Do While (j <= model_data%input_composition%atomic_species .And. flag)
+      If (Trim(model_data%input_composition%tag(j))==Trim(tg)) Then
+        flag=.False.
+      End If  
+      j=j+1
+    End Do
+    If (flag) Then
+      Write (messages(1),'(2(1x,a))') Trim(error_set), '"'//Trim(traj_data%coord_distrib%species)//'"&
+                                     & defined for the "species" directive is not a valid species.&
+                                     & Please review the definition of the &input_composition block' 
+      Call info(messages, 1)
+      Call error_stop(' ') 
+    End If 
+
+    ! Check definition of "species" directive
+    If (traj_data%coord_distrib%species_dir%fread) Then
+      If (traj_data%coord_distrib%species_dir%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Wrong (or missing) settings for the "species" directive.'
+        Call info(messages, 1)
+        Call error_stop(' ')
+      End If
+    Else
+      Write (messages(1),'(2(1x,a))') Trim(error_set), 'The user must define the "species" directive to&
+                                    & compute the coordinate distribution.&
+                                    & Check if the other directives have been defined correctly'
+      Call info(messages, 1)
+      Call error_stop(' ')
+    End If
+    
+    ! Check definition of "coordinate" directive
+    If (traj_data%coord_distrib%coordinate%fread) Then
+      If (traj_data%coord_distrib%coordinate%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Wrong (or missing) settings for the "coordinate" directive.'
+        Call info(messages, 1)
+        Call error_stop(' ')
+      Else
+        flag=.True. 
+        Do j=1, 3
+          If (Trim(traj_data%coord_distrib%coordinate%type)==Trim(coord(j))) Then
+            flag=.False.
+            traj_data%coord_distrib%indx=j
+          End If
+        End Do
+        If (flag) Then
+          Write (messages(1),'(2(1x,a))') Trim(error_set), 'Definition for the "coordinate" directive&
+                                    & is not valid. Valid options: "x", "y" or "z".&
+                                    & Check correctness of the directives within the block.'
+          Call info(messages, 1)
+          Call error_stop(' ')
+        End If
+      End If
+      
+      
+    Else
+      Write (messages(1),'(2(1x,a))') Trim(error_set), 'The user must define the "coordinate" directive to&
+                                    & compute the coordinate distribution. Valid options: "x", "y" or "z".&
+                                    & Check if the other directives have been defined correctly'
+      Call info(messages, 1)
+      Call error_stop(' ')
+    End If
+    
+  End Subroutine check_coord_distrib
+  
+  
   Subroutine check_data_analysis(files, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check the settings of the &data_analysis block
@@ -2765,7 +3702,7 @@ Contains
       Call info(' ', 1)
       Write (messages(1),'(1x,a)') 'The definition of the &lifetime block will compute:'
       Write (messages(2),'(1x,a)') '- the transfer correlation function (TCF) for the changing species&
-                                  & using the method (see manual): '//Trim(traj_data%lifetime%method%type)
+                                  & using the method: '//Trim(traj_data%lifetime%method%type)
       Write (messages(3),'(1x,a)') '- the residence times for each species separately (file RES_TIMES)'
       If (traj_data%lifetime%rattling_wait%fread) Then
         Write(word,'(f8.3)') traj_data%lifetime%rattling_wait%value/1000.0_wp
@@ -2785,24 +3722,86 @@ Contains
       Call info(messages, 3)
     End If
 
+    If (traj_data%coord_distrib%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the &coord_distrib block will compute the distribution&
+                                  & of the '//Trim(traj_data%coord_distrib%coordinate%type)//'-values for all&
+                                  & the "'//Trim(traj_data%coord_distrib%species)//'" species in the whole system'
+      Write (messages(2),'(1x,a,f6.3,a)') 'with a selected discretization of ',&
+                                         & traj_data%coord_distrib%delta%value, ' Angstrom for the coordinate.'                            
+      Call info(messages, 2)
+    End If
+    
+    If (model_data%species_definition%intra_geom%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the "&intramol_stat_settings" will compute the probability&
+                                  & distribution for the intramolecular:'
+      Call info(messages, 1)                            
+      If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
+        Write (messages(1),'(1x,a)') '- distances, using the settings of "&distance_parameters"'
+        Call info(messages, 1)                            
+      End If
+      If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
+        Write (messages(1),'(1x,a)') '- angles, using the settings of "&angle_parameters"'
+        Call info(messages, 1)                            
+      End If
+    End If
+
+    If (model_data%nndist%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the "&shortest_pair" block will compute probability distribution&
+                               & of the shortest distance of the selected pair of species (this is not RDF)'
+      Call info(messages, 1)                             
+    End If
+    
+    If (model_data%species_definition%inter_geom%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the "&intermol_stat_settings" will compute the probability&
+                                  & distribution for the intermolecular:'
+      Call info(messages, 1)                            
+      If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
+        Write (messages(1),'(1x,a)') '- distances, using the settings of "&distance_parameters"'
+        Call info(messages, 1)                            
+      End If
+      If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
+        Write (messages(1),'(1x,a)') '- angles, using the settings of "&angle_parameters"'
+        Call info(messages, 1)                            
+      End If
+      Write (messages(1),'(1x,a)') 'only considering the two nearest monitored species around each monitored species.'
+      Call info(messages, 1)                            
+    End If
+    
     If (traj_data%region%define%fread) Then
       Call info(' ', 1)
-      If (traj_data%ocf%invoke%fread .Or. traj_data%msd%invoke%fread .Or. traj_data%rdf%invoke%fread) Then
-        If (traj_data%ocf%invoke%fread .And. traj_data%msd%invoke%fread .And. traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') 'OCF, RDF and MSD analyses will be carried out for the region:'
-        Else If ((.Not. traj_data%ocf%invoke%fread) .And. traj_data%msd%invoke%fread .And. traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') 'MSD and RDF analyses will be carried out for the region:'
-        Else If (traj_data%ocf%invoke%fread .And. (.Not. traj_data%msd%invoke%fread) .And. traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') 'OCF and RDF analyses will be carried out for the region:'
-        Else If (traj_data%ocf%invoke%fread .And. traj_data%msd%invoke%fread .And. (.Not. traj_data%rdf%invoke%fread)) Then
-          Write (messages(1),'(1x,a)') 'OCF and MSD analyses will be carried out for the region:'
-        Else If (traj_data%ocf%invoke%fread .And. (.Not. traj_data%msd%invoke%fread) .And. (.Not. traj_data%rdf%invoke%fread)) Then
-          Write (messages(1),'(1x,a)') 'OCF analysis will be carried out for the region:'
-        Else If ((.Not. traj_data%ocf%invoke%fread) .And. traj_data%msd%invoke%fread .And. (.Not. traj_data%rdf%invoke%fread)) Then
-          Write (messages(1),'(1x,a)') 'MSD analysis will be carried out for the region:'
-        Else If ((.Not. traj_data%ocf%invoke%fread) .And. (.Not. traj_data%msd%invoke%fread) .And. traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') 'RDF analysis will be carried out for the region:'
+      If (traj_data%ocf%invoke%fread .Or. traj_data%msd%invoke%fread .Or. traj_data%rdf%invoke%fread .Or. &
+        model_data%species_definition%intra_geom%invoke%fread) Then
+        Write (messages(1),'(1x,a)') 'From the definition of the "&region" block, the computation of'
+        Call info(messages, 1)
+        If (traj_data%ocf%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- OCF'
+          Call info(messages, 1)
+        End If  
+        If (traj_data%rdf%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- RDF'
+          Call info(messages, 1)
+        End If  
+        If (traj_data%msd%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- MSD'
+          Call info(messages, 1)
         End If
+        If (model_data%species_definition%intra_geom%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- Intramolecular parameters'
+          Call info(messages, 1)
+        End If
+        If (model_data%species_definition%inter_geom%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- Intermolecular parameters'
+          Call info(messages, 1)
+        End If
+        If (model_data%nndist%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- shortest distance distribution for the selected pair'
+          Call info(messages, 1)
+        End If
+        Write (messages(1),'(1x,a)') 'will be only carried out:'
         Call info(messages, 1)
         Do k = 1, 3
           Do j = 1, traj_data%region%number(k)
@@ -2815,6 +3814,11 @@ Contains
             End If
           End Do 
         End Do
+        If (traj_data%rdf%invoke%fread) Then
+          Write (messages(1),'(1x,a)') 'IMPORTANT: For the RDF analysis, the definition of the &region block&
+                                      & only applies to the species listed in "tags_species_a"'
+          Call info(messages, 1)
+        End If  
       End If 
     End If
 

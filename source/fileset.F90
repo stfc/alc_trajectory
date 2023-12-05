@@ -59,9 +59,23 @@ Module fileset
   Integer(Kind=wi), Parameter, Public :: FILE_TCF_AVG=13 
   ! Residence times
   Integer(Kind=wi), Parameter, Public :: FILE_RES_TIMES=14 
+  ! Coordinate distribution
+  Integer(Kind=wi), Parameter, Public :: FILE_COORD_DISTRIB=15 
+  ! Intramol distances
+  Integer(Kind=wi), Parameter, Public :: FILE_INTRAMOL_DISTANCES=16 
+  ! Intramol angles
+  Integer(Kind=wi), Parameter, Public :: FILE_INTRAMOL_ANGLES=17 
+  ! Intermol distances to the first NN
+  Integer(Kind=wi), Parameter, Public :: FILE_INTERMOL_DISTANCES_NN1=18 
+  ! Intermol distances to the second NN
+  Integer(Kind=wi), Parameter, Public :: FILE_INTERMOL_DISTANCES_NN2=19 
+  ! Intermol angles
+  Integer(Kind=wi), Parameter, Public :: FILE_INTERMOL_ANGLES=20 
+  ! Shortest distance for selected pair of species
+  Integer(Kind=wi), Parameter, Public :: FILE_SHORTEST_PAIR=21 
   
   ! Size of filename array
-  Integer(Kind=wi), Parameter, Public :: NUM_FILES = 14
+  Integer(Kind=wi), Parameter, Public :: NUM_FILES = 21
 
   Public :: set_system_files, print_header_out, wrapping_up, refresh_out
 
@@ -121,7 +135,13 @@ Contains
     set_names(FILE_TCF)             = "TCF"
     set_names(FILE_TCF_AVG)         = "TCF_AVG"
     set_names(FILE_RES_TIMES)       = "RES_TIMES"
-
+    set_names(FILE_COORD_DISTRIB)   = "COORD_DISTRIBUTION"
+    set_names(FILE_INTRAMOL_DISTANCES) = "INTRAMOL_DISTANCES"
+    set_names(FILE_INTRAMOL_ANGLES)    = "INTRAMOL_ANGLES"
+    set_names(FILE_INTERMOL_ANGLES)    = "INTERMOL_ANGLES_NN"
+    set_names(FILE_INTERMOL_DISTANCES_NN1) = "INTERMOL_DISTANCES_NN1"
+    set_names(FILE_INTERMOL_DISTANCES_NN2) = "INTERMOL_DISTANCES_NN2"
+    set_names(FILE_SHORTEST_PAIR)   = "DISTANCE_SHORTEST_PAIR"
     ! Set default filenames
     Do file_no = 1, NUM_FILES
       Call files(file_no)%init(set_names(file_no))
