@@ -13,6 +13,8 @@
 Module settings 
 
   Use atomic_model,      Only : model_type, &
+                                geo_param_type, & 
+                                geo_spec_type, &
                                 check_length_directive,&
                                 check_model_settings,&
                                 print_model_settings
@@ -236,11 +238,23 @@ Contains
         !Read information inside the block
         Call read_msd(iunit, traj_data)
 
+      Else If (word(1:length) == '&shortest_pair') Then
+        Read (iunit, Fmt=*, iostat=io) model_data%nndist%invoke%type
+        Call set_read_status(word, io, model_data%nndist%invoke%fread, model_data%nndist%invoke%fail)
+        !Read information inside the block
+        Call read_shortest_pair(iunit, model_data%nndist)
+
       Else If (word(1:length) == '&rdf') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%rdf%invoke%type
         Call set_read_status(word, io, traj_data%rdf%invoke%fread, traj_data%rdf%invoke%fail)
         !Read information inside the block
         Call read_rdf(iunit, traj_data)
+
+      Else If (word(1:length) == '&coord_distrib') Then
+        Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%invoke%type
+        Call set_read_status(word, io, traj_data%coord_distrib%invoke%fread, traj_data%coord_distrib%invoke%fail)
+        !Read information inside the block
+        Call read_coord_distrib(iunit, traj_data)
 
       Else If (word(1:length) == '&track_unchanged_chemistry') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%unchanged%invoke%type
@@ -259,11 +273,12 @@ Contains
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
       Else
         If (word(1:1)=='&') Then
-          Write (message,'(1x,4a)') Trim(set_error), ' Unknown directive found: ', Trim(word),&
+          Write (message,'(1x,4a)') Trim(set_error), ' Unknown directive found: "', Trim(word),&
                                   &'. Do you use "&" to define a block? If so,&
                                   & make sure the block is valid and has right syntax.'
         Else
-          Write (message,'(1x,a)') Trim(set_error)//' Unknown directive found: '//Trim(word)//'.&
+          print*, word
+          Write (message,'(1x,a)') Trim(set_error)//' Unknown directive found: "'//Trim(word)//'".&
                                   & Have you correctly defined the previous directives? Have you forgotten something maybe?'
         End If 
         Call error_stop(message)
@@ -413,7 +428,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&End_chemistry"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&End_chemistry"?'
         Call error_stop(message)
       End If
 
@@ -641,7 +656,7 @@ Contains
         Else
           Write (messages(1),'(a,i3)') Trim(error_block)//' Problems to read bonding criteria ',  i
           model_data%extra_bonds%bond(i)%fread= .True.
-          Call check_length_directive(model_data%extra_bonds%bond(i), messages(1), .True., 'block')
+          Call check_length_directive(model_data%extra_bonds%bond(i), messages(1), .True., 'inblock')
         End If
 
         i=i+1
@@ -722,22 +737,38 @@ Contains
                            & model_data%species_definition%reference_tag%fail)
 
       Else If (Trim(word)=='bond_cutoff') Then
-         Read (iunit, Fmt=*, iostat=io) model_data%species_definition%bond_cutoff%tag,  &
-                                        model_data%species_definition%bond_cutoff%value, &
-                                        model_data%species_definition%bond_cutoff%units
-                                        
-         Call set_read_status(word, io, model_data%species_definition%bond_cutoff%fread,&
-                            & model_data%species_definition%bond_cutoff%fail)
+        Read (iunit, Fmt=*, iostat=io) model_data%species_definition%bond_cutoff%tag,  &
+                                       model_data%species_definition%bond_cutoff%value, &
+                                       model_data%species_definition%bond_cutoff%units
+                                       
+        Call set_read_status(word, io, model_data%species_definition%bond_cutoff%fread,&
+                           & model_data%species_definition%bond_cutoff%fail)
 
       Else If (word(1:length) == '&atomic_components') Then
-         Read (iunit, Fmt=*, iostat=io) word
-         Call set_read_status(word, io, model_data%species_definition%atomic_components%fread,&
-                            & model_data%species_definition%atomic_components%fail)
-         Call read_components_monitored_species(iunit, model_data)
+        Read (iunit, Fmt=*, iostat=io) word
+        Call set_read_status(word, io, model_data%species_definition%atomic_components%fread,&
+                           & model_data%species_definition%atomic_components%fail)
+        Call read_components_monitored_species(iunit, model_data)
+
+      Else If (word(1:length) == '&intramol_stat_settings') Then
+        Read (iunit, Fmt=*, iostat=io) model_data%species_definition%intra_geom%invoke%type
+        Call set_read_status(word, io, model_data%species_definition%intra_geom%invoke%fread, &
+                            & model_data%species_definition%intra_geom%invoke%fail, &
+                            & model_data%species_definition%intra_geom%invoke%type)
+        model_data%species_definition%intra_geom%tag='intramol_stat_settings'
+        Call read_geom_param_monitored_species(iunit, model_data%species_definition%intra_geom)
+
+      Else If (word(1:length) == '&intermol_stat_settings') Then
+        Read (iunit, Fmt=*, iostat=io) model_data%species_definition%inter_geom%invoke%type
+        Call set_read_status(word, io, model_data%species_definition%inter_geom%invoke%fread, &
+                            & model_data%species_definition%inter_geom%invoke%fail, &
+                            & model_data%species_definition%inter_geom%invoke%type)
+        model_data%species_definition%inter_geom%tag='intermol_stat_settings'
+        Call read_geom_param_monitored_species(iunit, model_data%species_definition%inter_geom)
 
       Else
         Write (messages(1),'(1x,a)') Trim(set_error)//' Directive "'//Trim(word)//&
-                                  &'" is not recognised as a valid settings. See manual.'
+                                  &'" is not recognised as a valid settings. See the "use_code.md" file.'
         Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_monitored_species"?'
         Write (messages(3),'(1x,a)') 'Have you included the units for "bond_cutoff"?'
         Call info(messages, 3)
@@ -748,6 +779,205 @@ Contains
     
   End Subroutine read_monitored_species
 
+  Subroutine read_geom_param_monitored_species(iunit, T)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to read blocks with parameters
+    ! for the statistical analysis of geometry quantitites 
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi),      Intent(In   ) :: iunit
+    Type(geo_spec_type),   Intent(InOut) :: T 
+    
+    Integer(Kind=wi)   :: io, length
+    Character(Len=256) :: message, word
+    Character(Len=256) :: set_error
+    
+    set_error = '***ERROR in the "&'//Trim(T%tag)//'" block (SETTINGS file).'
+
+    Do
+      Read (iunit, Fmt=*, iostat=io) word
+      
+      If (io /= 0) Then
+        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
+                                  & Use "&end_'//Trim(T%tag)//'" to close the block.&
+                                  & Check if directives are set correctly.'         
+        Call error_stop(message) 
+      End If  
+      
+      Call get_word_length(word,length)
+      Call capital_to_lower_case(word)
+      If (Trim(word)=='&end_'//Trim(T%tag)) Exit
+      Call check_for_rubbish(iunit, '&'//Trim(T%tag))
+
+      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
+      ! Do nothing if line is a comment of we have an empty line
+      Read (iunit, Fmt=*, iostat=io) word
+ 
+      Else If (Trim(word)=='&distance_parameters') Then
+        Read (iunit, Fmt=*, iostat=io) T%dist%invoke%type
+        Call set_read_status(word, io, T%dist%invoke%fread, T%dist%invoke%fail, T%dist%invoke%type)
+        T%dist%name='distance_parameters'
+        Call read_geom_param(iunit, T%tag, T%dist)
+
+      Else If (Trim(word)=='&angle_parameters') Then
+        Read (iunit, Fmt=*, iostat=io) T%angle%invoke%type
+        Call set_read_status(word, io, T%angle%invoke%fread, T%angle%invoke%fail, T%angle%invoke%type)
+        T%angle%name='angle_parameters'
+        Call read_geom_param(iunit, T%tag, T%angle)
+
+      Else
+        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
+                                & '" is not recognised as a valid settings.',&
+                                & ' See the "use_code.md" file. Have you properly closed the block with "'//Trim(T%tag)//'"?'
+        Call error_stop(message)
+      End If
+
+    End Do
+  
+  End Subroutine read_geom_param_monitored_species
+  
+  
+  Subroutine read_geom_param(iunit, inblock, M)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to read distance and angle settings
+    ! for statistics of the monitored species
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi),     Intent(In   ) :: iunit
+    Character(*),         Intent(In   ) :: inblock
+    Type(geo_param_type), Intent(InOut) :: M 
+    
+    Integer(Kind=wi)   :: io, length, i
+    Character(Len=256) :: message, word
+    Character(Len=256) :: messages(2)
+    Character(Len=256) :: set_error
+    
+    M%delta%tag='delta'
+    
+    set_error = '***ERROR in "&'//Trim(M%name)//'" within the "&'//Trim(inblock)//'" block (SETTINGS file).'
+
+    Do
+      Read (iunit, Fmt=*, iostat=io) word
+      
+      If (io /= 0) Then
+        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
+                                  & Use "&end_'//Trim(M%name)//'" to close the block.&
+                                  & Check if directives are set correctly.'         
+        Call error_stop(message) 
+      End If  
+      
+      Call get_word_length(word,length)
+      Call capital_to_lower_case(word)
+      If (Trim(word)=='&end_'//Trim(M%name)) Exit
+      Call check_for_rubbish(iunit, '&'//Trim(M%name))
+
+      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
+      ! Do nothing if line is a comment of we have an empty line
+      Read (iunit, Fmt=*, iostat=io) word
+ 
+      Else If (Trim(word)=='species') Then
+        If (Trim(M%name)=='distance_parameters') Then
+          M%nspecies=2
+        Else If (Trim(M%name)=='angle_parameters') Then
+          M%nspecies=3
+        End If
+        Read (iunit, Fmt=*, iostat=io) M%tag_species%type, (M%species(i), i=1, M%nspecies) 
+        Call set_read_status(word, io, M%tag_species%fread, M%tag_species%fail, M%tag_species%type)
+
+      Else If (Trim(word)=='lower_bound') Then
+         Read (iunit, Fmt=*, iostat=io) M%lower_bound%tag, M%lower_bound%value, M%lower_bound%units 
+         Call set_read_status(word, io, M%lower_bound%fread, M%lower_bound%fail)
+
+      Else If (Trim(word)=='upper_bound') Then
+         Read (iunit, Fmt=*, iostat=io) M%upper_bound%tag, M%upper_bound%value, M%upper_bound%units 
+         Call set_read_status(word, io, M%upper_bound%fread, M%upper_bound%fail)
+
+      Else If (Trim(word)=='delta') Then
+         Read (iunit, Fmt=*, iostat=io) M%delta%tag, M%delta%value, M%delta%units 
+         Call set_read_status(word, io, M%delta%fread, M%delta%fail)
+
+      Else
+        Write (messages(1),'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
+                                & '" is not recognised as a valid settings.'
+        Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_'//Trim(M%name)//'"? &
+                                & Have you defined the directives correctly? See the "use_code.md" file'
+        Call info (messages, 2)
+        Call error_stop(' ')
+      End If
+    End Do
+  
+  End Subroutine read_geom_param
+
+  Subroutine read_shortest_pair(iunit, M)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to read parameters from the
+    ! &shortest_pair block
+    !
+    ! author    - i.scivetti Nov 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi),     Intent(In   ) :: iunit
+    Type(geo_param_type), Intent(InOut) :: M 
+    
+    Integer(Kind=wi)   :: io, length, i
+    Character(Len=256) :: message, word
+    Character(Len=256) :: messages(2)
+    Character(Len=256) :: set_error
+    
+    M%delta%tag='delta'
+    
+    set_error = '***ERROR in "&shortest_pair" block (SETTINGS file).'
+
+    Do
+      Read (iunit, Fmt=*, iostat=io) word
+      
+      If (io /= 0) Then
+        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
+                                  & Use "&end_shortest_pair" to close the block.&
+                                  & Check if directives are set correctly.'         
+        Call error_stop(message) 
+      End If  
+      
+      Call get_word_length(word,length)
+      Call capital_to_lower_case(word)
+      If (Trim(word)=='&end_shortest_pair') Exit
+      Call check_for_rubbish(iunit, '&end_shortest_pair')
+
+      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
+      ! Do nothing if line is a comment of we have an empty line
+      Read (iunit, Fmt=*, iostat=io) word
+ 
+      Else If (Trim(word)=='tag_species') Then
+        M%nspecies=2
+        Read (iunit, Fmt=*, iostat=io) M%tag_species%type, (M%species(i), i=1, M%nspecies) 
+        Call set_read_status(word, io, M%tag_species%fread, M%tag_species%fail, M%tag_species%type)
+
+      Else If (Trim(word)=='lower_bound') Then
+         Read (iunit, Fmt=*, iostat=io) M%lower_bound%tag, M%lower_bound%value, M%lower_bound%units 
+         Call set_read_status(word, io, M%lower_bound%fread, M%lower_bound%fail)
+
+      Else If (Trim(word)=='upper_bound') Then
+         Read (iunit, Fmt=*, iostat=io) M%upper_bound%tag, M%upper_bound%value, M%upper_bound%units 
+         Call set_read_status(word, io, M%upper_bound%fread, M%upper_bound%fail)
+
+      Else If (Trim(word)=='delta') Then
+         Read (iunit, Fmt=*, iostat=io) M%delta%tag, M%delta%value, M%delta%units 
+         Call set_read_status(word, io, M%delta%fread, M%delta%fail)
+
+      Else
+        Write (messages(1),'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
+                                & '" is not recognised as a valid settings.'
+        Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_shortest_pair"? &
+                                & Have you defined the directives correctly? See the "use_code.md" file'
+        Call info (messages, 2)
+        Call error_stop(' ')
+      End If
+    End Do
+  
+  End Subroutine read_shortest_pair
+  
+  
   Subroutine read_components_monitored_species(iunit, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to extra bond settings
@@ -928,7 +1158,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_region"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_region"?'
         Call error_stop(message)
       End If
 
@@ -1037,7 +1267,8 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_track_unchanged_chemistry"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with&
+                                & "&end_track_unchanged_chemistry"?'
         Call error_stop(message)
       End If
 
@@ -1103,7 +1334,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_data_analysis"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_data_analysis"?'
         Call error_stop(message)
       End If
 
@@ -1173,13 +1404,76 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_rdf"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_rdf"?'
         Call error_stop(message)
       End If
 
     End Do
     
   End Subroutine read_rdf
+
+  Subroutine read_coord_distrib(iunit, traj_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to read the settigns for computing the coordinate distribution
+    ! of selective species. Information must be provided in the 
+    ! &coord_distrib block 
+    !
+    ! author    - i.scivetti Oct 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi), Intent(In   ) :: iunit
+    Type(traj_type),  Intent(InOut) :: traj_data 
+
+    Integer(Kind=wi)   :: io, length
+    Character(Len=256) :: message, word
+    Character(Len=256) :: set_error
+    
+    set_error = '***ERROR in the &coord_distrib block (SETTINGS file).'
+
+    Do
+      Read (iunit, Fmt=*, iostat=io) word
+      
+      If (io /= 0) Then
+        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
+                                  & Use "&end_coord_distrib" to close the block.&
+                                  & Check if directives are set correctly.'         
+        Call error_stop(message) 
+      End If  
+      
+      Call get_word_length(word,length)
+      Call capital_to_lower_case(word)
+      If (Trim(word)=='&end_coord_distrib') Exit
+      Call check_for_rubbish(iunit, '&coord_distrib')
+
+      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
+      ! Do nothing if line is a comment of we have an empty line
+      Read (iunit, Fmt=*, iostat=io) word
+
+      Else If (Trim(word)=='species') Then
+        Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%species_dir%type, traj_data%coord_distrib%species
+        Call set_read_status(word, io, traj_data%coord_distrib%species_dir%fread,&
+                           & traj_data%coord_distrib%species_dir%fail,traj_data%coord_distrib%species_dir%type)
+
+      Else If (Trim(word)=='delta') Then
+         Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%delta%tag, &
+                                      & traj_data%coord_distrib%delta%value,&
+                                      & traj_data%coord_distrib%delta%units 
+         Call set_read_status(word, io, traj_data%coord_distrib%delta%fread, traj_data%coord_distrib%delta%fail)
+
+      Else If (Trim(word)=='coordinate') Then
+        Read (iunit, Fmt=*, iostat=io) word, traj_data%coord_distrib%coordinate%type
+        Call set_read_status(word, io, traj_data%coord_distrib%coordinate%fread,& 
+                           & traj_data%coord_distrib%coordinate%fail,&
+                           & traj_data%coord_distrib%coordinate%type)
+      Else
+        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
+                                & '" is not recognised as a valid settings.',&
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_coord_distrib"?'
+        Call error_stop(message)
+      End If
+
+    End Do
+    
+  End Subroutine read_coord_distrib
   
   Subroutine read_msd(iunit, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1227,7 +1521,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_msd"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_msd"?'
         Call error_stop(message)
       End If
 
@@ -1284,7 +1578,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_lifetime"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_lifetime"?'
         Call error_stop(message)
       End If
 
@@ -1339,7 +1633,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See manual. Have you properly closed the block with "&end_ocf"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_ocf"?'
         Call error_stop(message)
       End If
 
@@ -1404,7 +1698,7 @@ Contains
     Logical  :: endblock, loop, error
     Logical  :: header(3), error_duplication
  
-    Integer(Kind=wi)   :: io, i, j, k, ilist
+    Integer(Kind=wi)   :: io, i, j, k, ilist, ic
     Character(Len=256) :: messages(10), word
     Character(Len=64 ) :: error_input_composition
  
@@ -1423,7 +1717,7 @@ Contains
     Write (messages(7),'(1x,a)')    '  elements  E_tg1  E_tg2  E_tg3 .... E_tgNsp'
     Write (messages(8),'(1x,a)')    '  amounts   N_tg1  N_tg2  N_tg3 .... N_tgNsp'
     Write (messages(9),'(1x,a)')    '&end_input_composition'
-    Write (messages(10),'(1x,a)')    'See manual for details'
+    Write (messages(10),'(1x,a)')    'See the "use_code.md" file for details'
     
     ! Read number of extra bonds
     Read (iunit, Fmt=*, iostat=io) word, model_data%input_composition%atomic_species
@@ -1542,7 +1836,18 @@ Contains
         endblock=.True.
       End If
     End Do
- 
+
+    ! Check if species tags contain asterix
+    Do i=1, model_data%input_composition%atomic_species
+      ic= Index(Trim(model_data%input_composition%tag(i)), '*') 
+      If (ic > 0) Then
+        Write (messages(2),'(3a)') 'Tag "', Trim(model_data%input_composition%tag(i)), &
+                                 '" contains an asterisk. Defined species MUST NOT contain asterisks. Please correct.'
+        Call info(messages,2)
+        Call error_stop(' ')
+      End If
+    End Do
+    
     ! Check if the number of atoms are correct
     Do i=1, model_data%input_composition%atomic_species
       If (model_data%input_composition%N0(i)< 0) Then

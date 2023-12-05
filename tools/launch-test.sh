@@ -40,7 +40,9 @@
    declare -a FileArray=("OUTPUT" "TAGGED_TRAJECTORY" \\
                          "TRACK_CHEMISTRY"  "UNCHANGED_CHEMISTRY" \\
                          "RDF" "MSD" "MSD_AVG" "OCF" "OCF_AVG"  \\
-                         "TCF" "TCF_AVG" "RES_TIMES")
+                         "TCF" "TCF_AVG" "RES_TIMES" "COORD_DISTRIBUTION" \\
+                         "INTRAMOL_DISTANCES" "INTRAMOL_ANGLES" "DISTANCE_SHORTEST_PAIR" \\
+                         "INTERMOL_DISTANCES_NN1" "INTERMOL_DISTANCES_NN2" "INTERMOL_ANGLES_NN")
 
   sep="/"	
   error="success"

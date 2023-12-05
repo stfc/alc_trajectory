@@ -61,13 +61,4 @@ Module input_types
     Logical            :: warn = .False. 
   End Type
 
-  Type, Public :: in_param_array
-    Real(Kind=wp),     Allocatable :: value(:)
-    Character(Len=16), Allocatable :: units(:)
-    Real(Kind=wp)     :: convert
-    Logical           :: fread= .False.
-    Logical           :: fail = .False.
-    Logical           :: warn = .False. 
-  End Type
-
 End Module input_types

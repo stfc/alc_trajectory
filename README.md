@@ -35,11 +35,13 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 * [***source***](./source): contains the source code. Files have the *.F90* extension
 * [***tools***](./tools): shell files for building, compiling and testing the code automatically.
 * [.gitignore](./.gitignore): instructs Git which file to ignore for development and integration.
+* [gitlab-ci.yml](gitlab-ci.yml): settings for automatic CI building and testing.
+* [CI_instructions.md](./CI_instructions.md): instructions to new developers for CI.
 * [CMakeList.txt](./CMakeList.txt): sets the framework for code building and testing with CMake. This file must ONLY be modified to add test cases.
-* [Jenkinsfile](./Jenkinsfile): file with specifications to build and run the testing infrastructure.
 * [LICENSE](./LICENSE): BSD 3-Clause License for ALC_TRAJECTORY. 
 * README.md: this file.
 * [cmake_building.md](./cmake_building.md): steps to build, compile and run tests using the CMake platform.
+* [coding_protocol.md](./coding_protocol.md): details the instructions of the adopted protocol for code development with Fortran.
 * [use_code.md](./use_code.md): provides instructions for use together with a detailed description of the implemented capabilties. 
 
 ## Dependencies
@@ -54,17 +56,12 @@ Information in parenthesis indicates the minimum version tested during the devel
 
 ## Getting started
 
-### Downloading the code
+### Obtaining the code
 The user with account *"username"* can clone the code locally (in machine *"wherever"*) by executing the following command with the SSH protocol
 ```sh
-username@wherever:/home/username/codes$ git clone git@github.com:stfc/alc_trajectory.git
+username@wherever:/home/username/codes$ git clone git@gitlab.stfc.ac.uk:alc_trajectory/alc_trajectory.git
 ```
-Instead, if the user wants to use the HTTPS protocol it must execute
-```sh
-username@wherever:/home/username/codes$ git clone https://github.com/stfc/alc_trajectory.git
-```
-Both ways generate the ***alc_trajectory*** folder as the root directory. Alternatively, the code can be downloaded from any of the available assets.  
-
+which generate the ***alc_trajectory*** folder as the root directory. Alternatively, the code can be downloaded from any of the available assets.
 
 ### Building and testing the code with CMake
 Details can be found in file [cmake_building.md](./cmake_building.md)
@@ -72,3 +69,13 @@ Details can be found in file [cmake_building.md](./cmake_building.md)
 ### Making use of the software
 Once the code has been installed and tested, the user should create a folder where to run the code from. In such folder, the MD trajectory must be copied to the TRAJECTORY file. The user also needs to provide the SETTINGS file with instructions for the type of analysis to execute. Instructions of the implemented capabilities can be found in the [use_code.md](./use_code.md) file. The SETTINGS files in folder [***examples***](./examples) offer explanatory templates, which are intended to help new users in the setting of input directives for execution. In each of the directories, the user will also find the corresponding TRAJECTORY files.
 
+## Contributing 
+Contributions from STFC staff are welcome as long as they comply with the coding protocols, as described in the [coding_protocol.md](./coding_protocol.md) file. Instructions for CI practices are provided in the [CI_instructions.md](./CI_instructions.md) file. New implementation must compulsory include test(s) for CI purposes. 
+
+Contributors should first create a fork using the [**Gitlab STFC**](https://gitlab.stfc.ac.uk/) web user-interface from the main [**ALC_TRAJECTORY**](https://gitlab.stfc.ac.uk/alc_trajectory/alc_trajectory) repository. For instructions of how to create a fork, please refer to the following [**link**](https://docs.gitlab.com/ee/user/project/repository/forking_workflow.html#creating-a-fork). Access to the generated fork will be available from the *Project* tab of [**Gitlab STFC**](https://gitlab.stfc.ac.uk/), which will be located at the address <span style="color:blue">https://gitlab.stfc.ac.uk/user_id/alc_trajectory</span>. In this address, *user_id* will be the user identification in [**Gitlab STFC**](https://gitlab.stfc.ac.uk/). Once the fork is created, the user can clone the *main* branch in the account *"username"* of the local machine *"wherever"* by executing the following command
+```sh
+username@wherever:/home/username/codes$ git clone -b main git@gitlab.stfc.ac.uk:user_id/alc_trajectory.git alc_trajectory
+```
+where ***alc_trajectory*** is set as the root directory. This folder will have been created following the execution of the command above. Any other name can be chosen.  
+
+Contributors should also request to become part of the ALC_TRAJECTORY project by contacting the individual in charge (owner) of the repository. 

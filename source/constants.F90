@@ -16,14 +16,15 @@ Module constants
 
   ! Code reference 
   Character(Len=16), Parameter, Public  :: code_name    = "ALC_TRAJECTORY" 
-  Character(Len=16), Parameter, Public  :: code_VERSION = "1.1"
-  Character(Len=16), Parameter, Public  :: date_RELEASE = "Aug 2023"
+  Character(Len=16), Parameter, Public  :: code_VERSION = "1.2"
+  Character(Len=16), Parameter, Public  :: date_RELEASE = "Dec 2023"
 
   ! FIXED PARAMETERS
   Real(Kind=wp), Parameter, Public  :: pi    = 3.14159265358979312e0_wp 
   Real(Kind=wp), Parameter, Public  :: twopi = 6.28318530717958623e0_wp 
   Real(Kind=wp), Parameter, Public  :: Farad = 96485332.900_wp
   Real(Kind=wp), Parameter, Public  :: Bohr_to_A = 0.529177249_wp
+  Real(Kind=wp), Parameter, Public  :: Rads_to_degrees = 57.2957795130823_wp
   Real(Kind=wp), Parameter, Public  :: avogadro  = 6.02214076E+23
   Real(Kind=wp), Parameter, Public  :: K_to_eV   = 8.61732814974056E-05_wp
   Real(Kind=wp), Parameter, Public  :: Ha_to_eV  =27.211386245988_wp

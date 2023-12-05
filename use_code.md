@@ -120,9 +120,51 @@ The model related settings of the previous sections are already sufficient to ev
 &nbsp;&nbsp;&nbsp;***&end_atomic_components***</span>  
 &nbsp;&nbsp;&nbsp;bond_cutoff&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  1.2 &nbsp;&nbsp;Angstrom  
 &nbsp;&nbsp;&nbsp;compute_amount&nbsp;&nbsp;  .True.  
+
+&nbsp;&nbsp;&nbsp;<span style="color: purple">***&intramol_stat_settings***  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&distance_parameters  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;species&nbsp;&nbsp;&nbsp;&nbsp;  H O  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;delta&nbsp;&nbsp;&nbsp;&nbsp;    0.005  Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;lower_bound&nbsp;&nbsp;&nbsp;&nbsp;    0.8 Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;upper_bound&nbsp;&nbsp;&nbsp;&nbsp;    1.4 Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&end_distance_parameters</span>  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: purple">&angle_parameters  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;species&nbsp;&nbsp;&nbsp;&nbsp;    H O H  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;lower_bound&nbsp;&nbsp;&nbsp;&nbsp;     80   degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;upper_bound&nbsp;&nbsp;&nbsp;&nbsp;     130  degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;delta&nbsp;&nbsp;&nbsp;&nbsp;       0.5    degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&end_angle_parameters  
+&nbsp;&nbsp;&nbsp;***&end_intramol_stat_settings***</span>  
+
+&nbsp;&nbsp;&nbsp;<span style="color: magenta">***&intermol_stat_settings***  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  &distance_parameters  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    delta    0.01  Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    lower_bound    2.3  Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    upper_bound    4.0 Angstrom  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&end_distance_parameters</span>  
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: magenta">&angle_parameters  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    lower_bound    30   degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    upper_bound    180  degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;    delta          2    degrees  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  &end_angle_parameters  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&end_intermol_stat_settings  
+&nbsp;&nbsp;&nbsp;***&end_intermol_stat_settings***</span>  
+
 ***&end_monitored_species***
 
-In this example, we name the species as" H2O" and use the Ow as the reference atomic tag. The atomic composition is set using the ***&atomic_components*** block, obvious in this case. The cutoff sets that the maximum bonding distance criterion between the O and the H atoms for the set to be considered as a "monitored species". When setting the optional ***compute_amount***  directive to .True. (set to .False. by default), the code computes the average number (and the standard deviation) of monitored species, and the result is printed to the OUTPUT file. The computed number depends on the settings for the &region block and the ignore_initial directive, if defined.
+In this example, we name the species as" H2O" and use the Ow as the reference atomic tag. The atomic composition is set using the ***&atomic_components*** block, obvious in this case. The cutoff sets that the maximum bonding distance criterion between the O and the H atoms for the set to be considered as a "monitored species". When setting the optional ***compute_amount***  directive to .True. (set to .False. by default), the code computes the average number (and the standard deviation) of monitored species, and the result is printed to the OUTPUT file. The computed number depends on the settings for the &region block and the ignore_initial directive, if defined.  
+ALC_TRAJECTORY also offers the possibility to compute probability densities for ***intra***molecular and ***inter***molecular distances and angles involving the monitored species, for which the user must define the <span style="color: purple">***&intramol_stat_settings***</span> and the <span style="color: magenta">***&intermol_stat_settings***</span>, respectively. Likewise, information of distances and angles are derived from the definition of the <span style="color: purple">&distance_parameters</span> and <span style="color: purple">&angle_parameters</span> sub-blocks, respectively.  
+
+<span style="color: purple">***&intramol_stat_settings***</span>  
+For intramolecular information, the user must define the <span style="color: purple">&intramol_stat_settings***</span> block. 
+For distances, the user must define the <span style="color: purple">&distance_parameters</span> with the pair of atomic elements involved, which must agree with the definitions of the <span style="color: blue"> ***&atomic_components***</span> block. To set the range of distances to be considered the user must also define the lower and upper bounds as well as the delta directive, which corresponds to the distance discretization. Allowed units are Bohr and Angstrom. The definition of this block generates the INTRAMOL_DISTANCES.  
+For angles, the <span style="color: purple">&distance_parameters</span> sub-block require three atomic elements, which must also be in agreement with the definition of <span style="color: blue"> ***&atomic_components***</span>. The order of the elements is important. In this case, only the H-O-H angle is computed, which is the internal angle for water. To set the range of angles to be considered the user must also define the lower and upper bounds as well as the delta directive, which corresponds to the discretization of the selected range. The definition of this block generates the INTRAMOL_ANGLES.  
+
+<span style="color: magenta">***&intermol_stat_settings***</span>  
+The definition of this block identifies the first and the second nearest monitored species around each monitored species. In contrast to the <span style="color: purple">***&intramol_stat_settings***</span> block, the user must not define the involved elements, as the algorithm will use the reference atomic species as defined in the ***reference_tag*** directive. This information is used to computed the probability density for of the first and second nearest monitored species if the <span style="color: purple">&distance_parameters</span> sub-block is defined, which will generate the INTERMOL_DISTANCES_NN1 and INTERMOL_DISTANCES_NN2 files. The description for the required directives of the <span style="color: purple">&distance_parameters</span> sub-block is the same as the  <span style="color: purple">&distance_parameters</span> sub-block within <span style="color: purple">***&intramol_stat_settings***</span>. 
+If the <span style="color: purple">&angle_parameters</span> sub-block is defined, ALC_TRAJECTORY computes the angle that each monitored species form with the first and second nearest monitored species. This information is used to obtain the probability density of this angle, considering all the monitored species of the system along trajectory. The description for the required directives of the <span style="color: purple">&angle_parameters</span> sub-block is the same as the  <span style="color: purple">&distance_parameters</span> sub-block within <span style="color: purple">***&intramol_stat_settings***</span>. The result is printed to the INTERMOL_ANGLES_NN file.
 
 ## <span style="color: green"> Trajectory settings for analysis</span>
 Having defined the model related settings, the next step is to specify trajectory related directives and blocks for MD analysis. The first two compulsory directives must be ensemble used and the timestep to record the trajectory. It is important to clarify that this timestep is not the time step used for the numerical integration of the equation of motion, but the time step used to record the configurations of the trajectory. For this example we have:  
@@ -228,3 +270,27 @@ In addition to the tracking of the changing chemical species, the user can also 
 
 The first directive must be ***number***, which indicates how many sites the user wants to track. A maximum of 10 sites are allowed. The directive ***tag*** specifies the atomic species to be tracked. Finally, the user must define the 4 atomic indexes with the ***indexes*** directive. In case that the declared indexes do not correspond to the defined ***tag***, the code will abort the execution. The positions of the tracked indexes are printed to the UNCHANGED_CHEMISTRY file.  
 In the hypothetical scenario the users aims to track Ow atoms for this example, the code would track the Ow species as long as they do not change their chemistry. If the chemistry changes, results would be printed up to the frame where the  change has occurred.
+
+### <span style="color: maroon"> Computing the probability distribution of selected species </span>
+For anisotropic models such as membranes or layered materials it might be convenient to compute the probability distribution of selected species along a particular coordinate (x, y or z). This information can be important to identify the role of confinement for example. To compute this quantity, we define the following block for this particular example:
+
+***&coord_distrib***  
+&nbsp;&nbsp;&nbsp; species &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Ow  
+&nbsp;&nbsp;&nbsp; coordinate  &nbsp;&nbsp;&nbsp;z  
+&nbsp;&nbsp;&nbsp; delta  &nbsp;&nbsp;0.1&nbsp;&nbsp;  Angstrom  
+***&end_coord_distrib***  
+
+In this case ALC_TRAJECTORY will compute the probability distribution of all Ow species (directive ***species***) along the z coordinate (directive ***coordinate***), which is the coordinate perpendicular to the Nafion backbone membrane. The discretization for the z coordinate is defined with the ***delta*** directive, set to 0.1 Angstrom in this case. Results are printed to the COORD_DISTRIBUTION file. 
+
+### <span style="color: maroon"> Computing the probability distribution for the shortest distance between defined species </span>
+To withdraw further information about the interactions between species, ALC_TRAJECTORY offers the possibility to compute the probability distribution for the closest distance for the pair defined between two selected species. To compute this quantity, the user must define the following block with directives:
+
+***&shortest_pair***  
+&nbsp;&nbsp;&nbsp;tag_species&nbsp;&nbsp;&nbsp;&nbsp;  Ow* Ow  
+&nbsp;&nbsp;&nbsp;lower_bound&nbsp;&nbsp;&nbsp;&nbsp;    2.3 Angstrom  
+&nbsp;&nbsp;&nbsp;upper_bound&nbsp;&nbsp;&nbsp;&nbsp;    3.0 Angstrom  
+&nbsp;&nbsp;&nbsp;delta&nbsp;&nbsp;&nbsp;&nbsp;    0.01  Angstrom  
+***&end_shortest_pair***  
+
+In this example, the tags of two (different) species must be defined with the ***tag_species*** directive. We remind that the asterix is used to identify a relevant atomic tag that has become part of a new chemical species from the definition of the ***search_chemistry*** block. Here the tag Ow* corresponds to the hydronium oxygen. The specification for the rest for the remaining directives define the distance range and the discretization to generate the probability distribution. Results are printed to the DISTANCE_SHORTEST_PAIR file.
+
