@@ -84,15 +84,58 @@ change_chemistry True                             # Indicate the algorithm to lo
 ##### The &monitored_species block. This blocks defines the particular type of species to "monitor" along the trajectory
 # The defined species MUST NOT be the changing chemical species
 &monitored_species
-  name H2O                                        # Name of the species. In this case water.
+  name H2O                                        # Name of the species: water in this case.
   reference_tag Ow                                # Only Ow atoms will be part of water. Ow sites can also form chemical species as described above
+  # Atomic definition of the monitored species
+  ############################################
   &atomic_components                              ##### This is to define the atomic composition of the monitored species. For the case of water it is obvious, but the structure of the block allows defining more complex structures:
     number_components 2                           # Number of atomic components (H and O)
     H  2                                          # 2 H atoms
     O  1                                          # 1 O atom
   &end_atomic_components                          #####
+  ############################################
   bond_cutoff      1.2 Angstrom                   # The maximum distance criteria for atomic bonding in this species is 1.2 Angstrom. Units can also be in "Bohr"
   compute_amount   .True.                         # Computes the average number (and STD) of the monitored species. The computed number depends on the settings for the &region block and the ignore_initial directive, if defined 
+
+  ##### Subblock for computation of intramolecular geometry (distances and angles) for monitored species
+  &intramol_stat_settings
+    # Computation of probability density for intramolecular distances
+    &distance_parameters
+      species  O H                                # Only consider distances between the species O and H
+      lower_bound    0.8 Angstrom                 # Consider distances larger than 0.8 Angstrom
+      upper_bound    1.4 Angstrom                 # Consider distance lower than 1.4 Angstrom
+      delta    0.005  Angstrom                    # Use a discretization of 0.005 Angstrom between 0.8 and 1.4 Angstrom 
+   &end_distance_parameters
+
+    # Computation of the probability density for intramolecular angles, only involving the species as defined below 
+    &angle_parameters
+      species    H O H                            # Species involved: the order of the species is relevant, with the species being the central one. Here we compute the angle formed between O and the two H.
+      lower_bound     80   degrees                # Consider angles larger than 80 degress
+      upper_bound     130  degrees                # Consider angles larger than 130 degress
+      delta       0.5    degrees                  # Use a discretization of 0.5 degrees between 80 and 130 degrees
+    &end_angle_parameters
+
+  &end_intramol_stat_settings
+
+  ##### Subblock for computation of intermolecular distances and angles between monitored species
+  &Intermol_stat_settings
+   # Computation of probability density for intermolecular distances between monitored species
+   # Here we do not need to defined the species involved as ALC_TRAJECTORY will automatically select the species defined for "reference_tar" above
+   # ALC_TRAJECTORY will compute the probability denstities for the first and the second nearest neighbour distances
+   &distance_parameters                           
+     delta    0.01  Angstrom                     # Use a discretization of 0.01 Angstrom between 2.3 and 4.0 Angstrom 
+     lower_bound    2.3  Angstrom                # Consider distance lower than 2.3 Angstrom
+     upper_bound    4.0 Angstrom                 # Consider distance lower than 4.0 Angstrom
+   &end_distance_parameters
+   
+   # Computation of the probability density for the angle that each monitored species form with the first and the second nearest species
+   &angle_parameters
+     lower_bound    30   degrees                 # Consider angles larger than 30 degress
+     upper_bound    180  degrees                 # Consider angles larger than 180 degress
+     delta          2    degrees                 # Use a discretization of 2 degrees between 30 and 180 degrees
+   &end_angle_parameters
+  &end_intermol_stat_settings
+
 &end_monitored_species                            
 #############################################################################################
 
@@ -168,3 +211,18 @@ print_retagged_trajectory  TRUE              # Print tagged trajectory (False by
   tag  Sch                                        # Requested species tag
   list_indexes  133  134 135  136                 # Atomic indexes. If these indexes do not correspond to the requested tag, the execution is aborted
 &end_track_unchanged_chemistry 
+
+#### The &coord_distrib block: computed the probability of finding a given species along the selected coordinate (x, y or z) for the trajectory
+&coord_distrib
+  species Ow                                      # species to compute the probability
+  coordinate z                                    # coordinate under consideration 
+  delta  0.1 Angstrom                             # coordinate discretization
+&end_coord_distrib
+
+#### The &shortest_pair block: computes the probability density for the closest distance between the species defined in tag, between lower_bound and uooer_bound
+&shortest_pair  
+  tag_species    Ow*  Ow                      # consider the pairs between Ow* and Ow                                                   
+  lower_bound    2.3  Angstrom                # Consider distance lower than 2.3 Angstrom
+  upper_bound    3.0 Angstrom                 # Consider distance lower than 3.0 Angstrom
+  delta    0.01  Angstrom                     # Use a discretization of 0.01 Angstrom between 2.4 and 3.0 Angstrom
+&end_shortest_pair

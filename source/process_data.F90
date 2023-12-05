@@ -22,7 +22,7 @@ Module process_data
   Public :: capital_to_lower_case, &
             check_for_symbols,     &  
             check_for_rubbish,     &
-             detect_rubbish,       & 
+            detect_rubbish,        & 
             get_word_length,       &
             remove_symbols,        &
             remove_front_tabs
@@ -37,17 +37,26 @@ Contains
     Character(Len=*), Intent(In   ) :: word
     Integer(Kind=wi), Intent(  Out) :: length
 
-    Logical                         :: flag 
+    Logical  :: flag 
+    Integer  :: i                  
 
     length = 0
     flag = .true.
 
     ! Start transferring
     Do While (flag)
+      i=iachar(word(length+1:length+1))
       If (word(length+1:length+1) == ' ') Then
-        flag = .false.
+        flag = .False.
       Else
-        length=length+1 
+        If (i>127) Then 
+          Call info('ERROR: Detection of Non-ASCII character in line "'//Trim(word)//'"', 1)
+          Call info('       Bear in mind UniCode characters (copy and paste from webpages)&
+                          & which might be invisible in standard editors', 1)
+          Call error_stop(' ')
+        Else 
+          length=length+1 
+        End If
       End If
     End Do
 
