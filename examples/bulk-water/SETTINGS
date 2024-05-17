@@ -59,9 +59,9 @@ cell_units   Angstrom                             #  Units for the simulation ce
   &end_atomic_components                          #####
   bond_cutoff  1.2 Angstrom                       # The maximum distance criteria for atomic bonding in this species is 1.2 Angstrom. Units can also be in "Bohr" 
 
- ##### Subblock for computation of intramolecular geometry (distances and angles) for monitored species
+ ##### Sub-block for computation of intra-molecular geometry (distances and angles) for monitored species
  &intramol_stat_settings
-   # Computation of probability density for intramolecular distances
+   # Computation of probability density for intra-molecular distances
    &distance_parameters
      species  H O                                # Only consider distances between the species O and H
      lower_bound    0.8 Angstrom                 # Consider distances larger than 0.8 Angstrom
@@ -69,21 +69,21 @@ cell_units   Angstrom                             #  Units for the simulation ce
      delta    0.005  Angstrom                    # Use a discretization of 0.005 Angstrom between 0.8 and 1.4 Angstrom
   &end_distance_parameters
 
-   # Computation of the probability density for intramolecular angles, only involving the species as defined below
+   # Computation of the probability density for intra-molecular angles, only involving the species as defined below
    &angle_parameters
      species    H O H                            # Species involved: the order of the species is relevant, with the species being the central one. Here we compute the angle formed between O and the two H.
-     lower_bound     80   degrees                # Consider angles larger than 80 degress
-     upper_bound     130  degrees                # Consider angles larger than 130 degress
+     lower_bound     80   degrees                # Consider angles larger than 80 degrees
+     upper_bound     130  degrees                # Consider angles larger than 130 degrees
      delta       0.5    degrees                  # Use a discretization of 0.5 degrees between 80 and 130 degrees
    &end_angle_parameters
 
  &end_intramol_stat_settings
 
- ##### Subblock for computation of intermolecular distances and angles between monitored species
+ ##### Sub-block for computation of intermolecular distances and angles between monitored species
  &Intermol_stat_settings
   # Computation of probability density for intermolecular distances between monitored species
   # Here we do not need to defined the species involved as ALC_TRAJECTORY will automatically select the species defined for "reference_tar" above
-  # ALC_TRAJECTORY will compute the probability denstities for the first and the second nearest neighbour distances
+  # ALC_TRAJECTORY will compute the probability densities for the first and the second nearest neighbour distances
   &distance_parameters
     delta    0.01  Angstrom                     # Use a discretization of 0.01 Angstrom between 2.3 and 4.0 Angstrom
     lower_bound    2.3  Angstrom                # Consider distance lower than 2.3 Angstrom
@@ -92,8 +92,8 @@ cell_units   Angstrom                             #  Units for the simulation ce
 
   # Computation of the probability density for the angle that each monitored species form with the first and the second nearest species
   &angle_parameters
-    lower_bound    30   degrees                 # Consider angles larger than 30 degress
-    upper_bound    180  degrees                 # Consider angles larger than 180 degress
+    lower_bound    30   degrees                 # Consider angles larger than 30 degrees
+    upper_bound    180  degrees                 # Consider angles larger than 180 degrees
     delta          2    degrees                 # Use a discretization of 2 degrees between 30 and 180 degrees
   &end_angle_parameters
  &end_intermol_stat_settings
@@ -131,6 +131,9 @@ timestep   10  fs             #  Time step of the recoderd trajectory, which is 
 ###################################################
 
 #### The &lifetime block: in this case it is not meaningful. This example corresponds to a model of 64 non-reactive water molecules
+
+## IMPORTANT: by default, the computed OCF and MSD for all the multiple time intervals are not printed. In case the user still wants to print the results for all time intervals, the "print_all_intervals" directive
+## must be set to .True. inside the corresponding block.
 
 #### The &msd block: computes the MSD for the monitored species defined in the &monitored_species block. 
 &msd                                              

@@ -1,3 +1,4 @@
+# Directive for compilation
 if (NOT FLAGS_SET)
   if(${CMAKE_Fortran_COMPILER_ID} STREQUAL "GNU")
 

@@ -2,14 +2,13 @@
 ! Module to analyse the trajectory. If the directive change_chemistry
 ! is set to .True., the algorithm searches and tracks changes of 
 ! chemical species based on the information of the &search_chemistry
-! block. This modelue executes all the implemented options for 
-! RDF, OCF, MSD and TCF analyses.
+! block. 
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! Author:        i.scivetti  Feb 2023
+! Author:     -  i.scivetti  Feb 2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module trajectory 
   Use atomic_model, Only : model_type, &
@@ -22,13 +21,15 @@ Module trajectory
                            check_cell_consistency,&
                            check_length_directive, &
                            check_orthorhombic_cell,&
+                           compute_distance_pbc,&
                            read_model,&
                            obtain_maximum_number_species,&
                            identify_monitored_indexes
 
   Use constants,    Only : max_components, &
                            max_at_species, &
-                           max_unchanged_atoms,&
+                           max_unchanged_atoms, &
+                           initial_tolerance, &
                            Rads_to_degrees, &
                            pi
 
@@ -39,15 +40,19 @@ Module trajectory
                            FILE_INTERMOL_ANGLES, &
                            FILE_INTRAMOL_DISTANCES, &
                            FILE_INTRAMOL_ANGLES, &
-                           FILE_SHORTEST_PAIR, &
-                           FILE_MSD, &
+                           FILE_SELECTED_NN_DISTANCES, &
+                           FILE_MSD_ALL, &
                            FILE_MSD_AVG, &
-                           FILE_OCF, &
+                           FILE_OCF_ALL, &
                            FILE_OCF_AVG, &
+                           FILE_CHEM_OCF_ALL, &
+                           FILE_CHEM_OCF_AVG, &
+                           FILE_SPCF_ALL, &
+                           FILE_SPCF_AVG, &
                            FILE_RDF, &
                            FILE_RES_TIMES, &
                            FILE_SET, & 
-                           FILE_TCF, &
+                           FILE_TCF_ALL, &
                            FILE_TCF_AVG, &
                            FILE_TRAJECTORY,&
                            FILE_TRACK_CHEMISTRY,&
@@ -79,6 +84,7 @@ Module trajectory
      Integer(Kind=wi) :: indx
      Character(Len=8) :: tag
      Character(Len=2) :: element
+    Integer(Kind=wi)  :: nn_indx(3)
   End Type 
 
   Type :: box_type
@@ -92,16 +98,19 @@ Module trajectory
      Type(in_string)   :: invoke
      Type(in_integer)  :: legendre_order
      Type(in_string)   :: u_definition
+     Type(in_logic)    :: print_all_intervals
   End Type 
   
   Type :: analysis_type
     Type(in_string)   :: invoke
+    Type(in_logic)    :: normalise_at_t0
     Type(in_param)    :: time_interval
     Type(in_param)    :: ignore_initial
     Type(in_param)    :: overlap_time
     Integer(Kind=wi)  :: N_seg
     Integer(Kind=wi)  :: Ninterval
     Integer(Kind=wi)  :: frame_ini
+    Logical           :: normalised
     Integer(Kind=wi), Allocatable :: seg_indx(:,:)
     Real(Kind=wp),    Allocatable :: variable(:,:)
     Integer(Kind=wi), Allocatable :: max_points(:) 
@@ -132,6 +141,7 @@ Module trajectory
     Type(in_string)  :: invoke
     Type(in_string)  :: pbc_xyz
     Type(in_string)  :: select
+    Type(in_logic)   :: print_all_intervals
     Logical          :: pbc(3)
     Real(Kind=wp)    :: r2
   End Type
@@ -175,9 +185,17 @@ Module trajectory
 
   !Type to describe the region where to constrain the analysis
   Type :: life_type
-    Type(in_string)   :: invoke
-    Type(in_string)   :: method
-    Type(in_param)    :: rattling_wait
+    Type(in_string)  :: invoke
+    Type(in_string)  :: method
+    Type(in_param)   :: rattling_wait
+    Type(in_logic)   :: print_all_intervals
+  End Type
+  
+  !Type to describe the region where to constrain the analysis
+  Type :: chemocf_type
+    Type(in_string)  :: invoke
+    Type(in_string)  :: variable
+    Type(in_logic)   :: print_all_intervals
   End Type
   
   ! Type for eqcm data and analysis
@@ -191,6 +209,7 @@ Module trajectory
     Type(ocf_type),       Public      :: ocf
     Type(msd_type),       Public      :: msd
     Type(life_type),      Public      :: lifetime
+    Type(chemocf_type),   Public      :: chem_ocf
     Type(unchanged_type), Public      :: unchanged
     Type(analysis_type),  Public      :: analysis
     Type(track_type)                  :: track_chem              
@@ -200,6 +219,7 @@ Module trajectory
     Integer(Kind=wi)                  :: Nmax_species
     Integer(Kind=wi)                  :: N_species
     Logical                           :: reload_trajectory
+    Logical                           :: active_bonds_computed
     Type(in_string),      Public      :: ensemble
     Type(coord_distrib_type), Public  :: coord_distrib
   Contains
@@ -209,7 +229,7 @@ Module trajectory
       Final             :: cleanup
   End Type traj_type
 
-  Public :: trajectory_analysis, research_trajectory  
+  Public :: trajectory_analysis, extract_trajectory  
   Public :: check_trajectory_settings
   
 
@@ -318,7 +338,7 @@ Contains
     
   End Subroutine cleanup
     
-  Subroutine research_trajectory(files, model_data, traj_data)
+  Subroutine extract_trajectory(files, model_data, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to obtain the trajectory. Atomic positions and elements must
     ! be provided in the TRAJECTORY file. If there are changes in the chemistry,
@@ -332,7 +352,7 @@ Contains
     Type(traj_type),   Intent(InOut) :: traj_data
     
     Logical            :: safe, loop_traj, fortho
-    Character(Len=256) :: message
+    Character(Len=256) :: message, nframes, md_length
     Character(Len=32 ) :: input_file, set_error
     Integer(Kind=wi)   :: i, j
     
@@ -415,10 +435,14 @@ Contains
     
     ! Open the TRAJECTORY file
     Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=Trim(input_file),Status='old')
+    Write(md_length,'(f12.3)') traj_data%frames*traj_data%timestep%value/1000.0_wp
+    Write(nframes,'(i8)') traj_data%frames
     Call info(' ', 1)
     Call info('Start of the analysis', 1)
     Call info('=====================', 1)
-    Write (message,'(1x,a,i6,a)') 'The code has identified a total of ', traj_data%frames, ' frames'
+    Write (message,'(1x,a)') 'The code has identified a total of '//Trim(Adjustl(nframes))//' frames. From&
+                                 & the setting of the "timestep" directive, the recorded MD trajectory is '&
+                                 &//Trim(Adjustl(md_length))//' ps long.'
     Call info(message, 1)
     Call info(' Reading trajectory from the "'//Trim(input_file)//'" file...', 1)
     i=1
@@ -444,7 +468,7 @@ Contains
     End Do
 
     Close(files(FILE_TRAJECTORY)%unit_no) 
-    Call info(' INFO: The trajectory has been defined successfully', 1)
+    Call info(' The trajectory has been defined successfully!', 1)
     Call info(' ', 1)
     Call refresh_out(files)
 
@@ -469,7 +493,7 @@ Contains
       Call refresh_out(files)
     End If 
   
-  End Subroutine research_trajectory
+  End Subroutine extract_trajectory
   
   Subroutine print_tagged_trajectory(files, model_data, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -515,42 +539,61 @@ Contains
     Character(Len=256)  :: message
     Logical             :: flag_inter_geo_stat
 
+    traj_data%active_bonds_computed=.False.
+    
+    ! Compute the total average of monitored species within the system
     If (model_data%config%monitored_species%fread .And. model_data%species_definition%compute_amount%stat) Then
       Call compute_number_monitored_species(traj_data, model_data)
     End If
 
     If(model_data%change_chemistry%stat) Then 
       Call print_tracking_species(files, traj_data, model_data)
-      If (traj_data%lifetime%invoke%fread) Then 
-        Call transfer_correlation_function(files, traj_data, model_data)
-        Call residence_times(files, traj_data, model_data)
+      ! Compute the lifetime and residence time for changing chemical species
+      If (traj_data%lifetime%invoke%fread) Then
+        Call compute_lifetime_related_quantities(files, traj_data, model_data)
+      End If
+      
+      ! Compute OCF for the changing chemical species
+      If (traj_data%chem_ocf%invoke%fread) Then
+         If (.Not. traj_data%active_bonds_computed) Then
+           Call find_active_bonds(traj_data, model_data)
+           traj_data%active_bonds_computed=.True.
+         End If
+         Call compute_orientational_chemistry(files, traj_data, model_data)
       End If
     End If
-
+    
+    ! Compute OCF for monitored species
     If (traj_data%ocf%invoke%fread) Then
       Call orientational_correlation_function(files, traj_data)
     End If
 
+    ! Compute MSD for monitores species
     If (traj_data%msd%invoke%fread) Then
       Call mean_squared_displacement(files, traj_data, model_data)
     End If
 
+    ! Print coordinate distribution for the species under consideration
     If (traj_data%coord_distrib%invoke%fread) Then
       Call coordinate_distribution(files, traj_data, model_data)
     End If
 
+    ! Compute RDF 
     If (traj_data%rdf%invoke%fread) Then
       Call radial_distribution_function(files, traj_data, model_data)
     End If
 
+    ! Print coordinates for selected unchanged species along the MD trajectory
     If (traj_data%unchanged%invoke%fread) Then
       Call print_unchanged_chemistry(files, traj_data)
     End If
 
+    ! Compute the distribution between the shortest distance of a selected pair
     If (model_data%nndist%invoke%fread) Then
       Call compute_shortest_distance_distribution(files, traj_data, model_data)
     End If
     
+    ! Compute intramolecular properties for monitored species
     If (model_data%species_definition%intra_geom%invoke%fread) Then
       If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
         Call obtain_intramol_geom_stat(files, traj_data, model_data%species_definition%atoms_per_species,&
@@ -562,8 +605,9 @@ Contains
       End If
     End If
 
+    ! Compute intermolecular properties for monitored species
     If (model_data%species_definition%inter_geom%invoke%fread) Then
-      Call find_neighbours_monitored_species(traj_data, flag_inter_geo_stat)
+      Call find_neighbours_monitored_species(traj_data, model_data, flag_inter_geo_stat)
       If (model_data%species_definition%inter_geom%dist%invoke%fread .And. flag_inter_geo_stat)  Then
         Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%dist, 1)
         Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%dist, 2)
@@ -573,6 +617,7 @@ Contains
         Call info(message, 1)
         Write (message,'(1x,a)') 'which separetely consider the first and the second nearest monitored species, respectively.'
         Call info(message, 1)
+        Call info(' ', 1)
       End If
       If (model_data%species_definition%inter_geom%angle%invoke%fread .And. flag_inter_geo_stat) Then
         Call obtain_intermol_geom_stat(files, traj_data, model_data%species_definition%inter_geom%angle)
@@ -600,15 +645,16 @@ Contains
     
   End Subroutine trajectory_analysis
 
-  Subroutine find_neighbours_monitored_species(traj_data, flag_exec)
+  Subroutine find_neighbours_monitored_species(traj_data, model_data, flag_exec)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to compute the two closest monitored species to a
     ! monitored species
     !
     ! author    - i.scivetti Oct 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Type(traj_type), Intent(InOut)  :: traj_data
-    Logical,         Intent(  Out)  :: flag_exec    
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+    Logical,           Intent(  Out) :: flag_exec    
 
     Integer(Kind=wi)  :: accum, net_frames
     Integer(Kind=wi)  :: i, j, k, mk, indx1, indx2, mindx1, mindx2
@@ -617,7 +663,7 @@ Contains
     Logical            :: flag, flag1, flag2
 
     Real(Kind=wp)  :: min_dist1, min_dist2, u(3)
-    Logical        :: modified
+    Logical        :: modified, finclude
     
     net_frames=0
     Do i = traj_data%analysis%frame_ini, traj_data%frames
@@ -638,13 +684,21 @@ Contains
           mindx1=indx1
           mindx2=indx1
           Do  k= 1, traj_data%Nmax_species
-            If (k /= j) Then  
+            If (model_data%species_definition%inter_geom%only_ref_tags_as_nn%stat) Then
+              If (traj_data%species(i,k)%alive) Then
+                finclude=.True.
+              Else
+                finclude=.False.
+              End If
+            Else
+              finclude=.True.
+            End If
+            If (k /= j .And. finclude) Then  
               indx2= traj_data%species(i,k)%list(1)
               u= traj_data%config(i,indx2)%r-traj_data%config(i,indx1)%r
               Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
               flag1= norm2(u) < min_dist1
               flag2= norm2(u) < min_dist2
-              
               If (flag1 .And. flag2) Then
                 min_dist2=min_dist1
                 mindx2=mindx1
@@ -683,9 +737,10 @@ Contains
 
   Subroutine compute_shortest_distance_distribution(files, traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to compute the statistics of the shortest distance
-    ! between selected species. Analysis is performed using the definitions
-    ! of the &shortest_pair block
+    ! Subroutine to compute the statistics of the shortest distance between
+    ! the "reference_species" and those defined by the "nn_species" directive
+    ! in the distance domain defined by the lower_bound and upper_bound
+    ! Analysis is performed using the definitions of the &selected_nn_distances block
     !
     ! author    - i.scivetti Nov 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -697,13 +752,13 @@ Contains
     Integer(Kind=wi)  :: fail(2) 
 
     Integer(Kind=wi)  :: i, j, k, mk
-    Integer(Kind=wi)  :: num_at(2), indx(2)
+    Integer(Kind=wi)  :: num_at(2)
     Integer(Kind=wi)  :: list_indx(model_data%config%num_atoms,2)
     
     Integer(Kind=wi)  :: iunit
     
-    Character(Len=256) :: messages(2), message
-    Logical            :: falloc, flag, flag1, flag2, found
+    Character(Len=256) :: messages(5), message
+    Logical            :: falloc, flag, flag1, found
 
     Integer(Kind=wi), Allocatable  :: h(:)
     Real(Kind=wp),    Allocatable  :: d(:)
@@ -713,8 +768,8 @@ Contains
     Logical        :: modified
     
     ! Define number of bins
-    nbins=Floor(Abs(model_data%nndist%upper_bound%value-model_data%nndist%lower_bound%value)/model_data%nndist%delta%value)
-    
+    nbins=Nint(Abs(model_data%nndist%upper_bound%value-model_data%nndist%lower_bound%value)/model_data%nndist%dr%value)
+   
     !Allocate arrays
     Allocate(h(nbins),  Stat=fail(1))
     Allocate(d(nbins),  Stat=fail(2))
@@ -740,60 +795,59 @@ Contains
         num_at=0
         list_indx=0
         Do j = 1, model_data%config%num_atoms
-          If (Trim(model_data%nndist%species(1))==Trim(traj_data%config(i,j)%tag)) Then
+          If (Trim(model_data%nndist%reference_species)==Trim(traj_data%config(i,j)%tag)) Then
               num_at(1)=num_at(1)+1
               list_indx(num_at(1),1)=j
-          Else If (Trim(model_data%nndist%species(2))==Trim(traj_data%config(i,j)%tag)) Then
+          End If 
+          k=1
+          flag=.False.
+          Do While (k <= model_data%nndist%num_nn_species .And. (.Not. flag))
+            If (Trim(model_data%nndist%nn_species(k))==Trim(traj_data%config(i,j)%tag)) Then
               num_at(2)=num_at(2)+1
               list_indx(num_at(2),2)=j
-          End If
-
+              flag=.True.  
+            End If
+            k=k+1
+          End Do
         End Do
-          
-        If (num_at(1) <= num_at(2))Then 
-           indx(1)=1
-           indx(2)=2
-        Else
-           indx(1)=2
-           indx(2)=1
-        End If
         
-        If (num_at(indx(1)) /= 0 .And. num_at(indx(2)) /=0) Then
-          Do j = 1, num_at(indx(1))
-            rj=traj_data%config(i,list_indx(j,indx(1)))%r
+        If (num_at(1) /= 0 .And. num_at(2) /=0) Then
+          Do j = 1, num_at(1)
+            rj=traj_data%config(i,list_indx(j,1))%r
             rmin=Huge(1.0_wp)
             found=.False.
-            Do k= 1, num_at(indx(2))
-              rk=traj_data%config(i,list_indx(k,indx(2)))%r
-              If (traj_data%region%define%fread) Then
-                Call within_region(traj_data, i, list_indx(j,indx(1)), flag1)
-                Call within_region(traj_data, i, list_indx(k,indx(2)), flag2)
-                If (flag1 .Or. flag2) Then
-                  flag=.True.
+            Do k= 1, num_at(2)
+              If (list_indx(k,2) /= list_indx(j,1)) Then
+                rk=traj_data%config(i,list_indx(k,2))%r
+                If (traj_data%region%define%fread) Then
+                  Call within_region(traj_data, i, list_indx(j,1), flag1)
+                  If (flag1) Then
+                    flag=.True.
+                  Else
+                    flag=.False. 
+                  End If
                 Else
-                  flag=.False. 
-                End If
-              Else
-                 flag=.True.
-              End If   
-              If (flag) Then
-                rjk=rj-rk
-                Call check_PBC(rjk, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
-                If (norm2(rjk) < rmin) Then
-                  found=.True.
-                  rmin=norm2(rjk)
+                   flag=.True.
+                End If   
+                If (flag) Then
+                  rjk=rj-rk
+                  Call check_PBC(rjk, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                  If (norm2(rjk) < rmin) Then
+                    found=.True.
+                    rmin=norm2(rjk)
+                  End If
                 End If
               End If
             End Do
             If (found) Then
               If (rmin >= model_data%nndist%lower_bound%value .And. rmin <= model_data%nndist%upper_bound%value) Then
-                mk=Floor((rmin-model_data%nndist%lower_bound%value)/model_data%nndist%delta%value)+1
+                mk=Floor((rmin-model_data%nndist%lower_bound%value)/model_data%nndist%dr%value)+1
                 If (mk <= nbins) Then
                   h(mk)=h(mk)+1
                   num_var=num_var+1
                 End If
               End If
-            End If           
+            End If
           End Do
         End If
         
@@ -809,41 +863,43 @@ Contains
         
       End Do
       
-      
       ! Print results
       If (accum /= 0) Then
          Do mk=1, nbins 
-           d(mk)=d(mk)/net_frames/model_data%nndist%delta%value
+           d(mk)=d(mk)/net_frames/model_data%nndist%dr%value
          End Do
        
         ! Print File
-        Open(Newunit=files(FILE_SHORTEST_PAIR)%unit_no, File=files(FILE_SHORTEST_PAIR)%filename,&
+        Open(Newunit=files(FILE_SELECTED_NN_DISTANCES)%unit_no, File=files(FILE_SELECTED_NN_DISTANCES)%filename,&
                           &Status='Replace')
-        iunit=files(FILE_SHORTEST_PAIR)%unit_no
-        Write (iunit,'(a)') '#  Probability distribution of the shortest distance between&
-                           & "'//Trim(model_data%nndist%species(1))//'" and "'//Trim(model_data%nndist%species(2))//'"'    
-        Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
+        iunit=files(FILE_SELECTED_NN_DISTANCES)%unit_no
+        Write (iunit,'(a)') '#  Probability distribution of the shortest distances between'
+        Write (iunit,'(a)') '#  the reference species "'//Trim(model_data%nndist%reference_species)//&
+                             &'" and the species defined in the "nn_species" directive'    
+        Write (iunit,'(a)') '#  Distance [Angstrom]     Probability [1/Angstrom]' 
         Do mk=1, nbins
-          Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*model_data%nndist%delta%value+&
+          Write(iunit,'(2x,f12.4,6x,f14.5)') (Real(mk,Kind=wp)-0.5_wp)*model_data%nndist%dr%value+&
                                             & model_data%nndist%lower_bound%value, d(mk)
         End Do
-        Write (message,'(1x,a)') 'The probability distribution of the shortest distance for the pair defined in &shortest_pair&
-                                  & was printed to the "'//Trim(files(FILE_SHORTEST_PAIR)%filename)//'" file.'
+        Write (message,'(1x,a)') 'The probability distribution of shortest distances between the "reference_species"&
+                                  & and the species defined in the "nn_species" directive was printed to the "'&
+                                  &//Trim(files(FILE_SELECTED_NN_DISTANCES)%filename)//'" file.'
         Call info(message, 1)
 
       Else
         Write (messages(1),'(1x,a)')   '*************************************************************************************'
-        Call info(messages, 1)
-        Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intermolecular geometry could not be executed'
-          Write (messages(2),'(1x,a)') '   Please verify the settings for the &shortest_pair'                        
-        Call info(messages, 2)
-        Write (messages(1),'(1x,a)')   '************************************************************************************'
-        Call info(messages, 1)
+        Write (messages(2),'(1x,a)')   '   WARNING: the statistics for the shortest distances between "reference_species" and'
+        Write (messages(3),'(1x,a)')   '   "nn_species" could not be executed. File "'&
+                                         &//Trim(files(FILE_SELECTED_NN_DISTANCES)%filename)//'" was not generated.'
+        Write (messages(4),'(1x,a)')   '   Please check the settings of the "&selected_nn_distances" block.       '
+        Write (messages(5),'(1x,a)')   '************************************************************************************'
+        Call info(messages, 5)
        End If
-      
-      ! Deallocate arrays   
+
       Deallocate(d,h)
     End If
+    
+    Call refresh_out(files)
     
   End Subroutine compute_shortest_distance_distribution
 
@@ -876,7 +932,7 @@ Contains
     Logical        :: modified
     
     ! Define number of bins
-    nbins=Floor(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
+    nbins=Nint(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
     
     !Allocate arrays
     Allocate(h(nbins),  Stat=fail(1))
@@ -940,7 +996,7 @@ Contains
             End If
           End If
         End Do
-
+        
         If(num_var /= 0) Then
           accum=accum+num_var
           ! Count net frame
@@ -978,20 +1034,21 @@ Contains
         Else If (Trim(M%invoke%type) == '&angle_parameters') Then
           Open(Newunit=files(FILE_INTERMOL_ANGLES)%unit_no, File=files(FILE_INTERMOL_ANGLES)%filename, Status='Replace')
           iunit=files(FILE_INTERMOL_ANGLES)%unit_no
-          Write (iunit,'(a)') '#  Probability distribution of the intermolecular angles using the settings of '//Trim(M%invoke%type)  
+          Write (iunit,'(a)') '#  Probability distribution of the intermolecular angles using the settings of '//Trim(M%invoke%type)
           Write (iunit,'(a)') '#  Value [Degrees]      Probability [1/Degrees]' 
           Write (message,'(1x,a)') 'The probability distribution of the intermolecular angles was printed to the "'&
                                   &//Trim(files(FILE_INTERMOL_ANGLES)%filename)//'" file.'
           Call info(message, 1)
+          Call info(' ', 1)
         End If
           Do mk=1, nbins
-            Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
+            Write(iunit,'(2x,f12.4,6x,f14.5)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
           End Do
       Else
         Write (messages(1),'(1x,a)')   '*************************************************************************************'
         Call info(messages, 1)
         Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intermolecular geometry could not be executed'
-          Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intermol_stat_settings'                        
+        Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intermol_stat_settings'
         Call info(messages, 2)
         Write (messages(1),'(1x,a)')   '************************************************************************************'
         Call info(messages, 1)
@@ -1000,6 +1057,8 @@ Contains
       ! Deallocate arrays   
       Deallocate(d,h)
     End If
+    
+    Call refresh_out(files)
     
   End Subroutine obtain_intermol_geom_stat
 
@@ -1034,7 +1093,7 @@ Contains
     Logical        :: modified
     
     ! Define number of bins
-    nbins=Floor(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
+    nbins=Nint(Abs(M%upper_bound%value-M%lower_bound%value)/M%delta%value)
     
     !Allocate arrays
     Allocate(h(nbins),  Stat=fail(1))
@@ -1161,23 +1220,25 @@ Contains
           Write (message,'(1x,a)') 'The probability distribution of the intramolecular distances was printed to the "'&
                                   &//Trim(files(FILE_INTRAMOL_DISTANCES)%filename)//'" file.'
           Call info(message, 1)
+          Call info(' ', 1)
         Else If (Trim(M%invoke%type) == '&angle_parameters') Then
           Open(Newunit=files(FILE_INTRAMOL_ANGLES)%unit_no, File=files(FILE_INTRAMOL_ANGLES)%filename, Status='Replace')
           iunit=files(FILE_INTRAMOL_ANGLES)%unit_no
-          Write (iunit,'(a)') '#  Probability distribution of the intramolecular angles using the settings of '//Trim(M%invoke%type)  
+          Write (iunit,'(a)') '#  Probability distribution of the intramolecular angles using the settings of '//Trim(M%invoke%type)
           Write (iunit,'(a)') '#  Value [Degrees]      Probability [1/Degrees]' 
           Write (message,'(1x,a)') 'The probability distribution of the intramolecular angles was printed to the "'&
                                   &//Trim(files(FILE_INTRAMOL_ANGLES)%filename)//'" file.'
           Call info(message, 1)
+          Call info(' ', 1)
         End If
           Do mk=1, nbins
-            Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
+            Write(iunit,'(2x,f12.4,6x,f13.5)') (Real(mk,Kind=wp)-0.5)*M%delta%value+M%lower_bound%value, d(mk)
           End Do
       Else
         Write (messages(1),'(1x,a)')   '*************************************************************************************'
         Call info(messages, 1)
         Write (messages(1),'(1x,a)')   '   WARNING: the statistics for the requested intramolecular geometry could not be executed'
-          Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intramol_stat_settings'                        
+        Write (messages(2),'(1x,a)') '   Please verify the settings for the '//Trim(M%invoke%type)//' in &intramol_stat_settings'
         Call info(messages, 2)
         Write (messages(1),'(1x,a)')   '************************************************************************************'
         Call info(messages, 1)
@@ -1187,6 +1248,8 @@ Contains
       Deallocate(d,h)
     End If
 
+    Call refresh_out(files)
+    
   End Subroutine obtain_intramol_geom_stat
   
   Subroutine residence_percentage(traj_data, model_data)
@@ -1221,8 +1284,8 @@ Contains
       End Do
     End Do
 
-    Write (messages(1),'(1x,a)') 'Population probabilities of formed chemical species'
-    Write (messages(2),'(1x,a)') '(from the species defined in the "include_tags" directive in "&enviroment_criteria")'
+    Write (messages(1),'(1x,a)') 'Population probabilities of donor species along MD trajectory'
+    Write (messages(2),'(1x,a)') '(species defined in the "include_tags" directive of the "&acceptor_criteria" block)'
     Write (messages(3),'(1x,a)') '-----------------------'
     Write (messages(4),'(1x,a)') 'Fraction (%)    Species'
     Write (messages(5),'(1x,a)') '-----------------------'
@@ -1272,6 +1335,7 @@ Contains
     Call info(message, 1)
     Call refresh_out(files)
     Close(iunit)
+    Call info(' ', 1)
   
   End Subroutine print_tracking_species
   
@@ -1335,12 +1399,13 @@ Contains
     End Do
     
     If (flag) Then
-      Write (message,'(1x,a)') 'The tracking of unchanged chemical species in xyz format was printed& 
+      Write (message,'(1x,a)') 'The tracking of the selected, unchanged chemical species in xyz format was printed& 
                               & to the "'//Trim(files(FILE_UNCHANGED_CHEM)%filename)//'" file'
       Call info(message, 1)
     End If
-    Call refresh_out(files)
+    
     Close(iunit)
+    Call refresh_out(files)
 
   End Subroutine print_unchanged_chemistry
 
@@ -1553,17 +1618,17 @@ Contains
         Write (iunit,'(a)') '#  Value [Angstrom]      Probability [1/Angstrom]' 
         
         Do m=1, nbins
-          Write(iunit,'(2x,f11.3,6x,f13.4)') (Real(m,Kind=wp)-0.5)*traj_data%coord_distrib%delta%value, d(m)
+          Write(iunit,'(2x,f12.4,6x,f14.5)') (Real(m,Kind=wp)-0.5)*traj_data%coord_distrib%delta%value, d(m)
         End Do
         Write (message,'(1x,a)') 'The distribution of the '//Trim(traj_data%coord_distrib%coordinate%type)//&
-                                &'-coordinate& for the "'//Trim(traj_data%coord_distrib%species)//'" species was&
+                                &'-coordinate for the "'//Trim(traj_data%coord_distrib%species)//'" species was&
                                 & printed to the "'//Trim(files(FILE_COORD_DISTRIB)%filename)//'" file.'
         Call info(message, 1)
       Else
         type_error=Trim(traj_data%coord_distrib%species)
         Write (messages(1),'(1x,a)') '*************************************************************************************'
         Call info(messages, 1)
-        Write (messages(1),'(1x,a)') '   WARNING: RDF analysis could not be executed'
+        Write (messages(1),'(1x,a)') '   WARNING: coordinate distribution analysis could not be executed'
           Write (messages(2),'(1x,a)') '   Requested species '//Trim(type_error)//' as specified in the &coord_distrib&
                                   & block could not be identified along the trajectory.'
           Write (messages(3),'(1x,a)') '   Please verify the settings for the &coord_distrib block. The user should also&
@@ -1578,6 +1643,8 @@ Contains
       ! Deallocate arrays   
       Deallocate(d,h)
    End If
+    
+   Call refresh_out(files) 
     
   End Subroutine coordinate_distribution
 
@@ -1787,6 +1854,8 @@ Contains
       Deallocate(cn, nn, gr, h)
     End If
     
+    Call refresh_out(files)
+    
   End Subroutine radial_distribution_function
 
   Subroutine mean_squared_displacement(files, traj_data, model_data)
@@ -1804,24 +1873,26 @@ Contains
     Integer(Kind=wi)  :: Nini_species, iunit, indx
     Real(Kind=wp)     :: time
     Real(Kind=wp)     :: base_time
-    Logical           :: set_u0, fzero
+    Logical           :: set_u0
 
     Character(Len=256) :: message, num_species
     Logical           :: terminated(traj_data%Nmax_species)
 
-    ! Print tracked species
-    Open(Newunit=files(FILE_MSD)%unit_no, File=files(FILE_MSD)%filename, Status='Replace')
-    iunit=files(FILE_MSD)%unit_no
-    Write(num_species,*) model_data%chem%N0%value 
-    Write (iunit,'(a,8x,a)') '#  Time (ps)', '"'//Trim(traj_data%msd%select%type)//'"-MSD for species "'&
-                              &//Trim(model_data%species_definition%name%type)//'" [A^2]' 
-
+    If (traj_data%msd%print_all_intervals%stat) Then
+      ! Print tracked species
+      Open(Newunit=files(FILE_MSD_ALL)%unit_no, File=files(FILE_MSD_ALL)%filename, Status='Replace')
+      iunit=files(FILE_MSD_ALL)%unit_no
+      Write(num_species,*) model_data%chem%N0%value
+      Write (iunit,'(a)') '#  MSD analysis for all the intervals' 
+      Write (iunit,'(a,8x,a)') '#  Time (ps)', '"'//Trim(traj_data%msd%select%type)//'"-MSD for species "'&
+                                &//Trim(model_data%species_definition%name%type)//'" [Angstrom^2]' 
+    End If
+                              
     !Set max_points to beyond the interval
     traj_data%analysis%max_points=traj_data%analysis%Ninterval+1
-                          
+
     Do k= 1, traj_data%analysis%N_seg
       set_u0=.True.
-      fzero=.False.
       l=0
       ! Initialise terminated tag
       Do j = 1, traj_data%Nmax_species
@@ -1872,41 +1943,71 @@ Contains
           If (traj_data%N_species /= 0) Then
             traj_data%msd%r2=traj_data%msd%r2/traj_data%N_species
             traj_data%analysis%variable(l,k)=traj_data%msd%r2
-            Write(iunit,'(f11.3, 4x, f11.4)') (time-base_time)/1000.0_wp, traj_data%msd%r2
+            If (traj_data%msd%print_all_intervals%stat) Then
+              Write(iunit,'(f11.3, 4x, f11.4)') (time-base_time)/1000.0_wp, traj_data%msd%r2
+            End If  
           End If  
           terminated(:)=.False.
           set_u0=.True.
-          If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
-            If (k /= traj_data%analysis%N_seg) Then
-              Write (iunit,*) ' '
-              Write (iunit,'(a)') '# Reseting the MSD analysis....' 
-              Write (iunit,'(a,8x,a)') '#  Time (ps)', '"'//Trim(traj_data%msd%select%type)//'"-MSD for species "'&
-                                &//Trim(model_data%species_definition%name%type)//'" [A^2]' 
-            End If                    
-          End If                      
-        Else
-          If ((traj_data%N_species) /= 0 .And. (.Not. fzero)) Then
-            traj_data%msd%r2=traj_data%msd%r2/traj_data%N_species
-            traj_data%analysis%variable(l,k)=traj_data%msd%r2
-            Write(iunit,'(f11.3, 4x, f11.4)') (time-base_time)/1000.0_wp, traj_data%msd%r2
-          Else  
-            fzero=.True.
-            traj_data%analysis%max_points(k)=i-1
+          If (traj_data%msd%print_all_intervals%stat) Then
+            If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
+              If (k /= traj_data%analysis%N_seg) Then
+                Write (iunit,'(a,8x,a)') '#  Time (ps)', '"'//Trim(traj_data%msd%select%type)//'"-MSD for species "'&
+                                  &//Trim(model_data%species_definition%name%type)//'" [Angstrom^2]' 
+              End If                    
+            End If
           End If
+        Else
+          If ((traj_data%N_species) /= 0) Then
+            traj_data%msd%r2=traj_data%msd%r2/traj_data%N_species
+          Else  
+            traj_data%msd%r2=0.0_wp
+          End If
+            traj_data%analysis%variable(l,k)=traj_data%msd%r2
+            If (traj_data%msd%print_all_intervals%stat) Then
+              Write(iunit,'(f11.3, 4x, f11.4)') (time-base_time)/1000.0_wp, traj_data%msd%r2
+            End If
         End If  
       End Do
     End Do
 
-    Write (message,'(1x,a)') 'The MSD analysis was printed to the "'//Trim(files(FILE_MSD)%filename)//'" file.'
-    Call info(message, 1)
-
-    ! Close file
-    Close(iunit)    
-
-    If (traj_data%analysis%N_seg /=1 ) Then
-      Call average_segments(files, traj_data, FILE_MSD_AVG, 'MSD')    
+    If (traj_data%msd%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'The MSD analysis for the multiple time intervals was printed to the "'&
+                                 &//Trim(files(FILE_MSD_ALL)%filename)//'" file.'
+      Else
+        Write (message,'(1x,a)') 'The MSD analysis was printed to the "'//Trim(files(FILE_MSD_ALL)%filename)//'" file&
+                                 & and corresponds to a single (only one) time interval.'
+      End If
+      Call info(message, 1)
+      Close(iunit)
     End If
 
+    Call average_segments(files, traj_data, FILE_MSD_AVG, 'MSD')
+    If (traj_data%analysis%N_seg ==1 ) Then 
+      Write (message,'(1x,a)') 'WARNING: A single time interval was used to compute the average MSD! The computed STD&
+                              & is zero. Use/Check the &data_analysis block to improve the statistics.'
+      Call info(message, 1)
+    End If
+
+    If (.Not. traj_data%msd%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'In case the user wants to print the MSD analysis for all time intervals,&
+                                & the "print_all_intervals" directive (within the &msd block) must be set to .True.'
+        Call info(message, 1)
+      End If
+    Else
+      If (traj_data%analysis%N_seg ==1) Then
+        Write (message,'(1x,a)') 'WARNING: Files "'&
+                               &//Trim(files(FILE_MSD_ALL)%filename)//'" and "'//Trim(files(FILE_MSD_AVG)%filename)//&
+                               &'" contain redundant results.'
+        Call info(message, 1)
+      End If
+    End If
+    
+    Call info(' ', 1)
+    Call refresh_out(files)
+    
   End Subroutine mean_squared_displacement
 
   Subroutine msd_vector_difference(traj_data, i, j)  
@@ -1967,8 +2068,32 @@ Contains
     End If
     
   End Subroutine msd_vector_difference
+  
+  Subroutine compute_lifetime_related_quantities(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the transfer correlation functions and residence
+    ! times
+    !
+    ! author    - i.scivetti April 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),   Intent(InOut) :: files(:)
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+    
+    Call transfer_correlation_function_sites(files, traj_data, model_data)
+    Call residence_times_sites(files, traj_data, model_data)
 
-  Subroutine residence_times(files, traj_data, model_data)
+    If (.Not. traj_data%active_bonds_computed) Then
+      Call find_active_bonds(traj_data, model_data)
+      traj_data%active_bonds_computed=.True.
+    End If
+    
+    Call special_pair_correlation_function(files, traj_data, model_data)
+  
+  
+  End Subroutine compute_lifetime_related_quantities
+
+  Subroutine residence_times_sites(files, traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to compute the residence times for the changing species
     !
@@ -1984,7 +2109,6 @@ Contains
     Logical            :: set_u0
     Character(Len=256) :: message
     
-!    Integer(Kind=wi)   :: indexes(2,model_data%chem%N0%value)
     Integer(Kind=wi)   :: ref_indx(model_data%chem%N0%value)
     Integer(Kind=wi)   :: icount(model_data%chem%N0%value)    
     Real(Kind=wp)      :: values(traj_data%frames, model_data%chem%N0%value)
@@ -2038,22 +2162,386 @@ Contains
     iunit=files(FILE_RES_TIMES)%unit_no
     
     Do m = 1, model_data%chem%N0%value
-    Write (iunit,'(a,i3)') '#  Species', m 
-    Write (iunit,'(a)') '#  Residence Time (ps)     Tag for site' 
-      Do i =1, icount(m)
-        Write(iunit,'(f11.3,15x,a)') values(i,m), Trim(tag(i,1,m))
-      End Do
-    Write (iunit,'(a)') ' ' 
+      Write (iunit,'(a,i3)') '#  Species', m 
+      Write (iunit,'(a)') '#  Residence Time (ps)     Tag for site' 
+        Do i =1, icount(m)
+          Write(iunit,'(f11.3,15x,a)') values(i,m), Trim(tag(i,1,m))
+        End Do
+      Write (iunit,'(a)') ' ' 
     End Do 
     
     Write (message,'(1x,a)') 'The Residence Times for each changing chemical species were&
                              & printed to the "'//Trim(files(FILE_RES_TIMES)%filename)//'" file.'
     Call info(message, 1)
     Close(iunit)
+    Call info(' ', 1)
+    Call refresh_out(files)
     
-  End Subroutine residence_times
+  End Subroutine residence_times_sites
+  
+  Subroutine compute_orientational_chemistry(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the orientational chemistry along the trajectory
+    !
+    ! author    - i.scivetti Febraury 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),   Intent(InOut) :: files(:)
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
 
-  Subroutine transfer_correlation_function(files, traj_data, model_data)
+    Integer(Kind=wi)   :: i, j, k, l, m
+    Integer(Kind=wi)   :: iunit, ini_indx, ncouples
+    Real(Kind=wp)      :: suma_i 
+    Real(Kind=wp)      :: time
+    Real(Kind=wp)      :: base_time
+    Real(Kind=wp)      :: u(3,model_data%chem%N0%value), u0(3,model_data%chem%N0%value)
+
+    Logical            :: set_s0, modified
+    Logical            :: first_change(model_data%chem%N0%value)
+    Integer(Kind=wp)   :: first_index(model_data%chem%N0%value)
+
+    Character(Len=256) :: message
+    
+    Integer(Kind=wi)   :: indexes(2,model_data%chem%N0%value)
+    Integer(Kind=wi)   :: ref_indx(model_data%chem%N0%value)
+    Integer(Kind=wi)   :: sites(4,traj_data%analysis%Ninterval,model_data%chem%N0%value)
+    Integer(Kind=wi)   :: s1, s2
+ 
+    If (traj_data%chem_ocf%print_all_intervals%stat) Then
+      ! Print header
+      Open(Newunit=files(FILE_CHEM_OCF_ALL)%unit_no, File=files(FILE_CHEM_OCF_ALL)%filename,  Status='Replace')
+      iunit=files(FILE_CHEM_OCF_ALL)%unit_no
+      Write (iunit,'(a)') '#  Orientational chemistry for all the intervals' 
+      Write (iunit,'(a)') '#  Time (ps)         OCF' 
+    End If
+
+    !Set max_points to beyond the interval
+    traj_data%analysis%max_points=traj_data%analysis%Ninterval+1
+
+    Do k= 1, traj_data%analysis%N_seg
+      set_s0=.True.
+      first_change=.True.
+      l=0
+      ini_indx=traj_data%analysis%seg_indx(1,k)
+      Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
+        l=l+1
+        If (Trim(traj_data%chem_ocf%variable%type)=='special_pair') Then
+        ! Obtain the index of the closest acceptor
+          Do m = 1, model_data%chem%N0%value
+            sites(1,l,m)=traj_data%track_chem%config(i,m)%indx
+            sites(2,l,m)=traj_data%track_chem%config(i,m)%nn_indx(1)
+            sites(3,l,m)=traj_data%track_chem%config(i,m)%nn_indx(2)
+            sites(4,l,m)=traj_data%track_chem%config(i,m)%nn_indx(3)
+          End Do
+        Else If (Trim(traj_data%chem_ocf%variable%type)=='acceptor_donor_transfer_couple') Then
+          If (set_s0) Then
+            Do m = 1, model_data%chem%N0%value
+              indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+              indexes(2,m)=traj_data%track_chem%config(i,m)%indx
+              ref_indx(m)=traj_data%track_chem%config(i,m)%indx
+            End Do  
+            set_s0=.False.
+          Else
+            Do m = 1, model_data%chem%N0%value
+              If (traj_data%track_chem%config(i,m)%indx/=indexes(2,m)) Then
+                indexes(1,m)=indexes(2,m)
+                indexes(2,m)=traj_data%track_chem%config(i,m)%indx
+                If (first_change(m)) Then
+                  Do j=1, l
+                    sites(1,j,m)=ref_indx(m)
+                    sites(2,j,m)=indexes(2,m)
+                  End Do
+                  first_change(m)=.False.
+                  first_index(m)=l
+                Else
+                  sites(1,l,m)=indexes(1,m)
+                  sites(2,l,m)=indexes(2,m)
+                End If
+              Else
+                If (.Not. first_change(m)) Then
+                  sites(1,l,m)=indexes(1,m)
+                  sites(2,l,m)=indexes(2,m)
+                End If
+              End If
+            End Do
+          End If
+        End If  
+      End Do
+      
+      ! Set initial vector for the transfer couple at the start of the time interval
+      Do m=1, model_data%chem%N0%value
+        s1=sites(1,1,m)
+        s2=sites(2,1,m)
+        
+        u0(:,m)=traj_data%config(ini_indx,s2)%r(:)-traj_data%config(ini_indx,s1)%r(:)
+        Call check_PBC(u0(:,m), traj_data%box(ini_indx)%cell, traj_data%box(ini_indx)%invcell, 0.5_wp, modified)
+        u0(:,m)=u0(:,m)/norm2(u0(:,m))
+      End Do
+
+      l=0
+      ! Compute the orientational correlation function from the chaning chemistry
+      base_time=(traj_data%analysis%seg_indx(1,k)-1)*traj_data%timestep%value
+      Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
+        l=l+1
+        time=(i-1)*traj_data%timestep%value
+        suma_i=0.0_wp
+        ncouples=0
+        Do m=1, model_data%chem%N0%value
+          s1=sites(1,l,m)
+          s2=sites(2,l,m)
+
+          u(:,m)=traj_data%config(i,s2)%r(:)-traj_data%config(i,s1)%r(:)
+          Call check_PBC(u(:,m), traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+          u(:,m)=u(:,m)/norm2(u(:,m))
+
+          If (Trim(traj_data%chem_ocf%variable%type)=='special_pair') Then
+            Call orientational_correlation_term_transfer_couple(traj_data, i, s1, u(:,m), u0(:,m), suma_i, ncouples)
+          Else If (Trim(traj_data%chem_ocf%variable%type)=='acceptor_donor_transfer_couple') Then
+            If (l<first_index(m)) Then
+              Call orientational_correlation_term_transfer_couple(traj_data, i, s1, u(:,m), u0(:,m), suma_i, ncouples)
+            Else
+              Call orientational_correlation_term_transfer_couple(traj_data, i, s2, u(:,m), u0(:,m), suma_i, ncouples) 
+            End If
+          End If
+        End Do 
+        
+        If (i==traj_data%analysis%seg_indx(2,k)) Then
+          If (ncouples /= 0) Then
+            suma_i=suma_i/ncouples
+            traj_data%analysis%variable(l,k)=suma_i
+            If (traj_data%chem_ocf%print_all_intervals%stat) Then
+              Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+            End If
+          End If
+          If (traj_data%chem_ocf%print_all_intervals%stat) Then
+            If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
+              If (k /= traj_data%analysis%N_seg) Then
+               Write (iunit,'(a)') '#  Time (ps)         OCF' 
+              End If
+            End If
+           End If 
+        Else
+          If (ncouples /= 0) Then
+            suma_i=suma_i/ncouples
+          Else
+            suma_i=0.0_wp
+          End If
+          traj_data%analysis%variable(l,k)=suma_i
+          If (traj_data%chem_ocf%print_all_intervals%stat) Then
+            Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+          End If  
+        End If
+        
+      End Do
+      
+    End Do  
+
+    If (traj_data%chem_ocf%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'The CHEM_OCF analysis for the multiple time intervals was printed to the "'&
+                                 &//Trim(files(FILE_CHEM_OCF_ALL)%filename)//'" file.'
+      Else
+        Write (message,'(1x,a)') 'The CHEM_OCF analysis was printed to the "'//Trim(files(FILE_CHEM_OCF_ALL)%filename)//'" file&
+                                 & and corresponds to a single (only one) time interval.'
+      End If
+      Call info(message, 1)
+      Close(iunit)
+    End If
+    ! Compute average
+    Call average_segments(files, traj_data, FILE_CHEM_OCF_AVG, 'CHEM_OCF')
+    If (traj_data%analysis%N_seg ==1 ) Then 
+      Write (message,'(1x,a)') 'WARNING: A single time interval was used to compute the average CHEM_OCF! The computed STD&
+                              & is zero. Use/Check the &data_analysis block to improve the statistics.'
+      Call info(message, 1)                        
+    End If
+    
+    If (.Not. traj_data%chem_ocf%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'In case the user wants to print the CHEM_OCF analysis for all time intervals,&
+                                & the "print_all_intervals" directive (within the &orientational_chemistry) must be set to .True.'
+        Call info(message, 1)
+      End If
+    Else
+      If (traj_data%analysis%N_seg ==1 .And. (.Not. traj_data%analysis%normalised)) Then
+        Write (message,'(1x,a)') 'WARNING: Files "'&
+                               &//Trim(files(FILE_CHEM_OCF_ALL)%filename)//'" and "'//Trim(files(FILE_CHEM_OCF_AVG)%filename)//&
+                               &'" contain redundant results.'
+        Call info(message, 1)
+      End If
+    End If
+
+    Call info(' ', 1)
+    Call refresh_out(files)
+    
+  End Subroutine compute_orientational_chemistry 
+
+  Subroutine compute_closest_pairs(traj_data, model_data, frame, nchem, s1, s2, s3)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the closest possible acceptor
+    !
+    ! author    - i.scivetti Feb 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(traj_type),   Intent(In   ) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+    Integer(Kind=wi),  Intent(In   ) :: frame
+    Integer(Kind=wi),  Intent(In   ) :: nchem
+    Integer(Kind=wi),  Intent(Out  ) :: s1
+    Integer(Kind=wi),  Intent(Out  ) :: s2
+    Integer(Kind=wi),  Intent(Out  ) :: s3
+  
+    Integer(Kind=wi)   :: i, j, k, l, mindx(3)
+    Real(Kind=wp)      :: dist, min_dist(3)
+    Logical            :: match_j, fexcl, flag(3)
+    Character(Len=8)   :: tgexcl 
+
+    i=traj_data%track_chem%config(frame,nchem)%indx
+    min_dist(1)=Huge(1.0_wp) 
+    min_dist(2)=Huge(1.0_wp)
+    min_dist(3)=Huge(1.0_wp)
+    
+    If (model_data%chem%acceptor%info_exclude%fread) Then
+      tgexcl=traj_data%config(frame,i)%tag  
+      Call remove_symbols(tgexcl, '*')
+      fexcl=.False.
+      l=1
+      Do While (l <= model_data%chem%acceptor%N0_excl .And. (.Not. fexcl))
+        If (Trim(tgexcl)==Trim(model_data%chem%acceptor%tg_excl(l))) Then
+           fexcl=.True.
+        End If
+        l=l+1
+      End Do  
+    Else 
+      fexcl=.False. 
+    End If
+
+    mindx(1)=i
+    mindx(2)=i
+    mindx(3)=i
+    
+    j=1
+    Do While (j <= model_data%config%num_atoms)
+      If (i/=j) Then
+        match_j=.False.
+        k=1
+        Do While (k <= model_data%chem%acceptor%N0_incl .And. (.Not. match_j))
+          If (Trim(traj_data%config(frame,j)%tag)==Trim(model_data%chem%acceptor%tg_incl(k))) Then
+            match_j=.True.
+            If (fexcl) Then
+              l=1
+              Do While (l <= model_data%chem%acceptor%N0_excl .And. match_j)
+                If (Trim(traj_data%config(frame,j)%tag)==Trim(model_data%chem%acceptor%tg_excl(l))) Then
+                   match_j=.False.
+                End If
+                l=l+1
+              End Do
+            End If
+          End If
+          k=k+1
+        End Do
+
+        If(match_j) Then
+          Call compute_distance_PBC(traj_data%config(frame,i)%r(:), traj_data%config(frame,j)%r(:),&
+                                  & traj_data%box(frame)%cell, traj_data%box(frame)%invcell, dist)
+          flag(1)= dist < min_dist(1)
+          flag(2)= dist < min_dist(2)
+          flag(3)= dist < min_dist(3)
+          If (flag(1) .And. flag(2) .And. flag(3)) Then
+            min_dist(3)=min_dist(2)
+            min_dist(2)=min_dist(1)
+            min_dist(1)=dist
+            mindx(3)=mindx(2)
+            mindx(2)=mindx(1)
+            mindx(1)=j
+          Else If ((.Not. flag(1)) .And. flag(2) .And. flag(3)) Then
+            min_dist(3)=min_dist(2)
+            min_dist(2)=dist
+            mindx(3)=mindx(2)
+            mindx(2)=j
+          Else If ((.Not. flag(1)) .And. (.Not. flag(2)) .And. flag(3)) Then
+            min_dist(3)=dist
+            mindx(3)=j
+          End If
+        End If
+      End If
+      j=j+1
+    End Do
+    
+    s1=mindx(1)
+    s2=mindx(2)
+    s3=mindx(3)
+    
+    If (s1==s2) Then
+      call error_stop('ERRROOR')
+    End If
+    
+    If (s1==s3) Then
+      call error_stop('ERRROOR')
+    End If
+    
+    If (s2==s3) Then
+      call error_stop('ERRROOR')
+    End If
+  
+  End Subroutine compute_closest_pairs
+
+  Subroutine orientational_correlation_term_transfer_couple(traj_data, i, s2, u, u0, suma_i, ncouples)  
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the contribution to the correlation for the relevant 
+    ! transfer couple at the MD frame i (cij)
+    !
+    ! author    - i.scivetti Feb 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Integer(Kind=wi),  Intent(In   ) :: i
+    Integer(Kind=wi),  Intent(In   ) :: s2
+    Real(Kind=wp),     Intent(In   ) :: u(3)
+    Real(Kind=wp),     Intent(In   ) :: u0(3)
+    Real(Kind=wp),     Intent(InOut) :: suma_i
+    Integer(Kind=wi),  Intent(InOut) :: ncouples
+    
+    Real(Kind=wp)     :: x, cij
+    Logical           :: flag
+    
+    If (traj_data%region%define%fread) Then
+      Call within_region(traj_data, i, s2, flag)
+    Else
+      flag=.True.
+    End If
+
+    If (flag) Then
+      x=Dot_product(u,u0)
+      ncouples=ncouples+1
+      cij=(3.0_wp*(x)**2-1.0_wp)/2.0_wp
+      suma_i=suma_i+cij
+    End If
+
+  End Subroutine orientational_correlation_term_transfer_couple  
+ 
+  Subroutine find_active_bonds(traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to identify the active bond for the changing sites along the
+    ! trajectory
+    !
+    ! author    - i.scivetti April 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+
+    Integer(Kind=wi)   :: i, m
+    Integer(Kind=wi)   :: s1, s2, s3
+    
+    Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do  m= 1, model_data%chem%N0%value
+        Call compute_closest_pairs(traj_data, model_data, i, m, s1, s2, s3)
+        traj_data%track_chem%config(i,m)%nn_indx(1)=s1
+        traj_data%track_chem%config(i,m)%nn_indx(2)=s2
+        traj_data%track_chem%config(i,m)%nn_indx(3)=s3
+      End Do
+    End Do
+  
+  End Subroutine find_active_bonds
+ 
+  Subroutine transfer_correlation_function_sites(files, traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to compute the transfer correlation function (TCF) involving
     ! the changing chemistry species
@@ -2069,13 +2557,12 @@ Contains
     Real(Kind=wp)      :: suma_i 
     Real(Kind=wp)      :: time
     Real(Kind=wp)      :: base_time
-    Logical            :: set_u0
+    Logical            :: set_t0
     Character(Len=256) :: message
     
     Logical            :: terminated(traj_data%analysis%Ninterval, model_data%chem%N0%value)
     Integer(Kind=wi)   :: indexes(2,model_data%chem%N0%value)
     Integer(Kind=wi)   :: ref_indx(model_data%chem%N0%value)
-    Integer(Kind=wi)   :: ref_indx2(model_data%chem%N0%value)
     Integer(Kind=wi)   :: time_indx(model_data%chem%N0%value)
     Integer(Kind=wi)   :: Nnet
     
@@ -2085,21 +2572,22 @@ Contains
 
     Real(Kind=wp)      :: tchange(model_data%chem%N0%value)
     Character(Len=256) :: method
-    Real(Kind=wp)      :: rattling
     
     method=Trim(traj_data%lifetime%method%type)
-    rattling=traj_data%lifetime%rattling_wait%value
     
-    ! Print header
-    Open(Newunit=files(FILE_TCF)%unit_no, File=files(FILE_TCF)%filename, Status='Replace')
-    iunit=files(FILE_TCF)%unit_no
-    Write (iunit,'(a)') '#  Time (ps)          TCF' 
+    If (traj_data%lifetime%print_all_intervals%stat) Then
+     ! Print header
+     Open(Newunit=files(FILE_TCF_ALL)%unit_no, File=files(FILE_TCF_ALL)%filename, Status='Replace')
+     iunit=files(FILE_TCF_ALL)%unit_no
+     Write (iunit,'(a)') '#  TCF Analysis for all the intervals' 
+     Write (iunit,'(a)') '#  Time (ps)         TCF' 
+    End If
 
     !Set max_points to beyond the interval
     traj_data%analysis%max_points=traj_data%analysis%Ninterval+1
-    
+
     Do k= 1, traj_data%analysis%N_seg
-      set_u0=.True.
+      set_t0=.True.
       follow=.True.
       first=.True.
       tchange=0.0_wp
@@ -2113,15 +2601,15 @@ Contains
       Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
         time=(i-1)*traj_data%timestep%value
         If (Trim(method)=='hicf' .Or. Trim(method)=='hdcf') Then
-          If (set_u0) Then
+          If (set_t0) Then
             Do m = 1, model_data%chem%N0%value
               ref_indx(m)=traj_data%track_chem%config(i,m)%indx
             End Do  
-            set_u0=.False.
+            set_t0=.False.
           Else
             Do m = 1, model_data%chem%N0%value
               If (follow(m)) Then
-                If (traj_data%track_chem%config(i,m)%indx/=ref_indx(m)) Then
+                If (traj_data%track_chem%config(i,m)%indx /= ref_indx(m)) Then
                   If (.Not. hold(m)) Then
                     tchange(m)=time
                     hold(m)=.True.
@@ -2130,7 +2618,7 @@ Contains
                 Else 
                   hold(m)=.False.
                 End If  
-                If (((time-tchange(m)) > rattling) .And. hold(m)) Then
+                If (hold(m)) Then
                   If (Trim(method)=='hicf') Then
                     ntop=i
                   Else If (Trim(method)=='hdcf') Then
@@ -2142,127 +2630,391 @@ Contains
                   End Do
                   hold(m)=.False.
                 End If
-                If ((i==traj_data%analysis%seg_indx(2,k)) .And. hold(m)) Then
-                  ntop=i
+              End If
+            End Do
+          End If
+        End If
+        
+        If (Trim(method)=='hicf*' .Or. Trim(method)=='hdcf*') Then
+          If (set_t0) Then
+            Do m = 1, model_data%chem%N0%value
+              indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+              indexes(2,m)=traj_data%track_chem%config(i,m)%indx
+              ref_indx(m)=traj_data%track_chem%config(i,m)%indx
+            End Do  
+            set_t0=.False.
+          Else
+    
+            Do m = 1, model_data%chem%N0%value
+              If (follow(m)) Then
+                If (traj_data%track_chem%config(i,m)%indx/=indexes(2,m)) Then
+                  indexes(1,m)=indexes(2,m)
+                  indexes(2,m)=traj_data%track_chem%config(i,m)%indx
+                End If
+                
+                If (indexes(1,m) /= ref_indx(m) .And. indexes(2,m) /= ref_indx(m)) Then
+                  If (.Not. hold(m)) Then
+                   tchange(m)=time
+                   hold(m)=.True.
+                   time_indx(m)=i
+                  End If
+                Else
+                  hold(m)=.False.
+                End If
+    
+                If (hold(m)) Then
+                  If (Trim(method)=='hicf*') Then
+                    ntop=i
+                  Else If (Trim(method)=='hdcf*') Then
+                    ntop=traj_data%analysis%seg_indx(2,k)
+                    follow(m)=.False.
+                  End If
+                  
                   Do n=time_indx(m), ntop
                     terminated(n-ini_indx+1,m)=.True.
                   End Do
+                  hold(m)=.False.
+                End If
+              End If
+            End Do
+          End If
+        End If
+    
+      End Do
+      
+      l=0
+      base_time=(traj_data%analysis%seg_indx(1,k)-1)*traj_data%timestep%value
+      Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
+        time=(i-1)*traj_data%timestep%value
+        l=l+1
+        Nnet=0
+        Do j = 1, model_data%chem%N0%value
+          If (traj_data%region%define%fread) Then
+            Call within_region(traj_data, i, traj_data%track_chem%config(i,j)%indx, flag)
+          Else
+            flag=.True.
+          End If
+          If (flag) Then
+            Nnet=Nnet+1
+          End If
+        End Do
+    
+        suma_i=0.0_wp
+        If (.Not. All(terminated(l,:))) Then
+          suma_i=0.0_wp
+          Do j = 1, model_data%chem%N0%value
+            If(.Not. terminated(l,j)) Then
+              If (traj_data%region%define%fread) Then
+                Call within_region(traj_data, i, traj_data%track_chem%config(i,j)%indx, flag)
+              Else
+                flag=.True.
+              End If
+              If (flag) Then
+                suma_i=suma_i+1.0_wp    
+              End If
+            End If  
+          End Do
+          If (Nnet > 0) Then
+            suma_i=suma_i/Nnet
+          End If
+        End If
+       
+        traj_data%analysis%variable(l,k)=suma_i
+        If (traj_data%lifetime%print_all_intervals%stat) Then
+          Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+          If (i==traj_data%analysis%seg_indx(2,k) .And. (traj_data%analysis%N_seg /=1)) Then
+             If (k /= traj_data%analysis%N_seg) Then
+               Write (iunit,'(a)') '#  Time (ps)        TCF' 
+             End If
+          End If   
+        End If
+      End Do
+    End Do
+    
+    If (traj_data%lifetime%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'The TCF analysis for the multiple time intervals was printed to the "'&
+                                 &//Trim(files(FILE_TCF_ALL)%filename)//'" file.'
+      Else
+        Write (message,'(1x,a)') 'The TCF analysis was printed to the "'//Trim(files(FILE_TCF_ALL)%filename)//'" file&
+                                 & and corresponds to a single (only one) time interval.'
+      End If
+      Call info(message, 1)
+      Close(iunit)
+    End If
+    
+    ! Compute average
+    Call average_segments(files, traj_data, FILE_TCF_AVG, 'TCF')
+    If (traj_data%analysis%N_seg ==1 ) Then 
+      Write (message,'(1x,a)') 'WARNING: A single time interval was used to compute the average TCF! The computed STD&
+                              & is zero. Use/Check the &data_analysis block to improve the statistics.'
+      Call info(message, 1)
+    End If
+    
+    If (.Not. traj_data%lifetime%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'In case the user wants to print the TCF analysis for all time intervals,&
+                                & the "print_all_intervals" directive (within the &lifetime block) must be set to .True.'
+        Call info(message, 1)
+      End If
+    Else
+      If (traj_data%analysis%N_seg ==1 .And. (.Not. traj_data%analysis%normalised)) Then
+        Write (message,'(1x,a)') 'WARNING: Files "'&
+                               &//Trim(files(FILE_TCF_ALL)%filename)//'" and "'//Trim(files(FILE_TCF_AVG)%filename)//&
+                               &'" contain redundant results.'
+        Call info(message, 1)
+      End If
+    End If
+
+    Call info(' ', 1)
+    Call refresh_out(files)
+    
+  End Subroutine transfer_correlation_function_sites
+  
+  Subroutine special_pair_correlation_function(files, traj_data, model_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to compute the correlation function of the special pair (SPCF),
+    ! which is defined by the atomic pair of the chemical site and the closest NN, 
+    ! either donor or acceptor
+    !
+    ! author    - i.scivetti April 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),   Intent(InOut) :: files(:)
+    Type(traj_type),   Intent(InOut) :: traj_data
+    Type(model_type),  Intent(In   ) :: model_data
+
+    Integer(Kind=wi)   :: i, j, k, l, m, n, ntop
+    Integer(Kind=wi)   :: iunit, ini_indx
+    Real(Kind=wp)      :: suma_i 
+    Real(Kind=wp)      :: time
+    Real(Kind=wp)      :: base_time
+    Logical            :: set_t0
+    Character(Len=256) :: message
+    
+    Logical            :: terminated(traj_data%analysis%Ninterval, model_data%chem%N0%value)
+    Integer(Kind=wi)   :: indexes(2,model_data%chem%N0%value)
+    Integer(Kind=wi)   :: ref_indx(2,model_data%chem%N0%value)
+    
+    Integer(Kind=wi)   :: time_indx(model_data%chem%N0%value)
+    Integer(Kind=wi)   :: Nnet
+    
+    Logical            :: follow(model_data%chem%N0%value)
+    Logical            :: first(model_data%chem%N0%value)
+    Logical            :: flag
+    Logical            :: hold(model_data%chem%N0%value)
+
+    Real(Kind=wp)      :: tchange(model_data%chem%N0%value)
+    Character(Len=256) :: method
+    
+    method=Trim(traj_data%lifetime%method%type)
+    
+    If (traj_data%lifetime%print_all_intervals%stat) Then
+     ! Print header
+     Open(Newunit=files(FILE_SPCF_ALL)%unit_no, File=files(FILE_SPCF_ALL)%filename, Status='Replace')
+     iunit=files(FILE_SPCF_ALL)%unit_no
+     Write (iunit,'(a)') '#  SPCF Analysis for all the intervals' 
+     Write (iunit,'(a)') '#  Time (ps)         SPCF' 
+    End If
+
+    !Set max_points to beyond the interval
+    traj_data%analysis%max_points=traj_data%analysis%Ninterval+1
+
+    Do k= 1, traj_data%analysis%N_seg
+      set_t0=.True.
+      follow=.True.
+      first=.True.
+      tchange=0.0_wp
+      hold=.False.
+      ! Initialise terminated tag
+      Do m = 1, model_data%chem%N0%value
+        terminated(:,m)=.False.
+      End Do
+      
+      ini_indx=traj_data%analysis%seg_indx(1,k)
+      Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
+        time=(i-1)*traj_data%timestep%value
+        If (Trim(method)=='hicf' .Or. Trim(method)=='hdcf') Then
+          If (set_t0) Then
+            Do m = 1, model_data%chem%N0%value
+              indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+              indexes(2,m)=traj_data%track_chem%config(i,m)%nn_indx(1)
+              ref_indx(1,m)=indexes(1,m)
+              ref_indx(2,m)=indexes(2,m)
+            End Do  
+            set_t0=.False.
+          Else
+    
+            Do m = 1, model_data%chem%N0%value
+              If (follow(m)) Then
+                If (traj_data%track_chem%config(i,m)%nn_indx(1)/=indexes(2,m)) Then
+                   indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+                   indexes(2,m)=traj_data%track_chem%config(i,m)%nn_indx(1)
+                End If
+                
+                If ((indexes(1,m) /= ref_indx(1,m) .Or. indexes(2,m) /= ref_indx(2,m)) .And. &
+                    (indexes(1,m) /= ref_indx(2,m) .Or. indexes(2,m) /= ref_indx(1,m))) Then
+                  If (.Not. hold(m)) Then
+                   tchange(m)=time
+                   hold(m)=.True.
+                   time_indx(m)=i
+                  End If
+                Else
+                  hold(m)=.False.
+                End If
+    
+                If (hold(m)) Then
+                  If (Trim(method)=='hicf') Then
+                    ntop=i
+                  Else If (Trim(method)=='hdcf') Then
+                    ntop=traj_data%analysis%seg_indx(2,k)
+                    follow(m)=.False.
+                  End If
+                  
+                  Do n=time_indx(m), ntop
+                    terminated(n-ini_indx+1,m)=.True.
+                  End Do
+                  hold(m)=.False.
+                End If
+              End If
+            End Do
+          End If
+        End If
+
+        If (Trim(method)=='hicf*' .Or. Trim(method)=='hdcf*') Then
+          If (set_t0) Then
+            Do m = 1, model_data%chem%N0%value
+              indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+              indexes(2,m)=traj_data%track_chem%config(i,m)%nn_indx(1)
+              ref_indx(1,m)=indexes(1,m)
+            End Do  
+            set_t0=.False.
+          Else
+    
+            Do m = 1, model_data%chem%N0%value
+              If (follow(m)) Then
+                If (traj_data%track_chem%config(i,m)%nn_indx(1)/=indexes(2,m)) Then
+                   indexes(1,m)=traj_data%track_chem%config(i,m)%indx
+                   indexes(2,m)=traj_data%track_chem%config(i,m)%nn_indx(1)
+                End If
+                
+                If (indexes(1,m) /= ref_indx(1,m) .And. indexes(2,m) /= ref_indx(1,m)) Then
+                  If (.Not. hold(m)) Then
+                   tchange(m)=time
+                   hold(m)=.True.
+                   time_indx(m)=i
+                  End If
+                Else
+                  hold(m)=.False.
+                End If
+    
+                If (hold(m)) Then
+                  If (Trim(method)=='hicf*') Then
+                    ntop=i
+                  Else If (Trim(method)=='hdcf*') Then
+                    ntop=traj_data%analysis%seg_indx(2,k)
+                    follow(m)=.False.
+                  End If
+                  
+                  Do n=time_indx(m), ntop
+                    terminated(n-ini_indx+1,m)=.True.
+                  End Do
+                  hold(m)=.False.
                 End If
               End If
             End Do
           End If
         End If
         
-        If (Trim(method)=='hdcf*' .Or. Trim(method)=='hdcf-2s') Then
-          If (set_u0) Then
-            Do m = 1, model_data%chem%N0%value
-              indexes(1,m)=traj_data%track_chem%config(i,m)%indx
-              indexes(2,m)=traj_data%track_chem%config(i,m)%indx
-              ref_indx(m)=traj_data%track_chem%config(i,m)%indx
-            End Do  
-            set_u0=.False.
-          Else
-            Do m = 1, model_data%chem%N0%value
-              If (follow(m)) Then
-                If (traj_data%track_chem%config(i,m)%indx/=indexes(2,m)) Then
-                  indexes(1,m)=indexes(2,m)
-                  indexes(2,m)=traj_data%track_chem%config(i,m)%indx
-                  If (first(m)) Then
-                    ref_indx2(m)=traj_data%track_chem%config(i,m)%indx
-                    first(m)=.False.
-                  End If
-                  If (Trim(method)=='hdcf*') Then
-                    If (indexes(1,m) /= ref_indx(m) .And. indexes(2,m) /= ref_indx(m)) Then
-                      flag=.True.
-                    Else
-                      flag=.False.
-                    End If
-                  Else If (Trim(method)=='hdcf-2s') Then
-                   If (indexes(2,m) /= ref_indx2(m)) Then
-                     flag=.True.
-                   Else
-                     flag=.False.
-                   End If
-                  End If
-                  
-                  If (flag) Then
-                    If (.Not. hold(m)) Then
-                     tchange(m)=time
-                     hold(m)=.True.
-                     time_indx(m)=i
-                    End If
-                  Else
-                    hold(m)=.False.
-                  End If
-                End If
-                If (((time-tchange(m)) > rattling) .And. hold(m)) Then
-                  Do n=time_indx(m), traj_data%analysis%seg_indx(2,k)
-                    terminated(n-ini_indx+1,m)=.True.
-                  End Do
-                  follow(m)=.False.
-                End If
-                If ((i==traj_data%analysis%seg_indx(2,k)) .And. hold(m)) Then
-                  ntop=i
-                  Do n=time_indx(m), ntop
-                    terminated(n-ini_indx+1,m)=.True.
-                  End Do
-                End If
-              End If
-            End Do
-          End If
-        End If
-   
       End Do
       
-      flag=.True.
       l=0
       base_time=(traj_data%analysis%seg_indx(1,k)-1)*traj_data%timestep%value
       Do i = traj_data%analysis%seg_indx(1,k), traj_data%analysis%seg_indx(2,k)
         time=(i-1)*traj_data%timestep%value
         l=l+1
-        If (flag) Then
-          If (All(terminated(l,:))) Then
-            suma_i=0.0_wp
-!             flag=.False.
-!             traj_data%analysis%max_points(k)=l-1
+        Nnet=0
+        Do j = 1, model_data%chem%N0%value
+          If (traj_data%region%define%fread) Then
+            Call within_region(traj_data, i, traj_data%track_chem%config(i,j)%indx, flag)
           Else
-            suma_i=0.0_wp
-            Nnet=0
-            Do j = 1, model_data%chem%N0%value
-              If(.Not. terminated(l,j)) Then
-                suma_i=suma_i+1.0_wp    
-                Nnet=Nnet+1
-              End If  
-            End Do
-            suma_i=suma_i/model_data%chem%N0%value
+            flag=.True.
           End If
-         
           If (flag) Then
-            traj_data%analysis%variable(l,k)=suma_i
-            Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+            Nnet=Nnet+1
           End If
-      
+        End Do
+    
+        suma_i=0.0_wp
+        If (.Not. All(terminated(l,:))) Then
+          suma_i=0.0_wp
+          Do j = 1, model_data%chem%N0%value
+            If(.Not. terminated(l,j)) Then
+              If (traj_data%region%define%fread) Then
+                Call within_region(traj_data, i, traj_data%track_chem%config(i,j)%indx, flag)
+              Else
+                flag=.True.
+              End If
+              If (flag) Then
+                suma_i=suma_i+1.0_wp    
+              End If
+            End If  
+          End Do
+          If (Nnet > 0) Then
+            suma_i=suma_i/Nnet
+          End If
         End If
-        If (i==traj_data%analysis%seg_indx(2,k) .And. (traj_data%analysis%N_seg /=1)) Then
-           If (k /= traj_data%analysis%N_seg) Then
-             Write (iunit,*) ' '
-             Write (iunit,'(a)') '# Reseting the TCF analysis....' 
-             Write (iunit,'(a)') '#  Time (ps)          TCF' 
-           End If
+       
+        traj_data%analysis%variable(l,k)=suma_i
+        If (traj_data%lifetime%print_all_intervals%stat) Then
+          Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+          If (i==traj_data%analysis%seg_indx(2,k) .And. (traj_data%analysis%N_seg /=1)) Then
+             If (k /= traj_data%analysis%N_seg) Then
+               Write (iunit,'(a)') '#  Time (ps)        SPCF' 
+             End If
+          End If   
         End If
       End Do
     End Do
     
-    Write (message,'(1x,a)') 'The TFC analysis was&
-                             & printed to the "'//Trim(files(FILE_TCF)%filename)//'" file.'
-    Call info(message, 1)
-    Close(iunit)
+    If (traj_data%lifetime%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'The SPCF analysis for the multiple time intervals was printed to the "'&
+                                 &//Trim(files(FILE_SPCF_ALL)%filename)//'" file.'
+      Else
+        Write (message,'(1x,a)') 'The SPCF analysis was printed to the "'//Trim(files(FILE_SPCF_ALL)%filename)//'" file&
+                                 & and corresponds to a single (only one) time interval.'
+      End If
+      Call info(message, 1)
+      Close(iunit)
+    End If
     
-    If (traj_data%analysis%N_seg /=1 ) Then
-      Call average_segments(files, traj_data, FILE_TCF_AVG, 'TCF')    
+    ! Compute average
+    Call average_segments(files, traj_data, FILE_SPCF_AVG, 'SPCF')
+    If (traj_data%analysis%N_seg ==1 ) Then 
+      Write (message,'(1x,a)') 'WARNING: A single time interval was used to compute the average SPCF! The computed STD&
+                              & is zero. Use/Check the &data_analysis block to improve the statistics.'
+      Call info(message, 1)
+    End If
+    
+    If (.Not. traj_data%lifetime%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'In case the user wants to print the SPCF analysis for all time intervals,&
+                                & the "print_all_intervals" directive (within the &lifetime block) must be set to .True.'
+        Call info(message, 1)
+      End If
+    Else
+      If (traj_data%analysis%N_seg ==1 .And. (.Not. traj_data%analysis%normalised)) Then
+        Write (message,'(1x,a)') 'WARNING: Files "'&
+                               &//Trim(files(FILE_SPCF_ALL)%filename)//'" and "'//Trim(files(FILE_SPCF_AVG)%filename)//&
+                               &'" contain redundant results.'
+        Call info(message, 1)
+      End If
     End If
 
-  End Subroutine transfer_correlation_function
+    Call info(' ', 1)
+    Call refresh_out(files)
+    
+  End Subroutine special_pair_correlation_function
   
   Subroutine average_segments(files, traj_data, file_number, what)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2276,68 +3028,146 @@ Contains
     Character(Len=*),  Intent(In   ) :: what
   
     Integer(Kind=wi) :: i, k, iunit, Nnet 
-    Real(Kind=wp)    :: sum_i, average, std, maximum, minimum
-    Logical          :: flag
+    Real(Kind=wp)    :: sum_i, average, average_net, std, norma
+    Logical          :: flag, fcompute
     Character(Len=256) :: message
-    ! Print header
-    Open(Newunit=files(file_number)%unit_no, File=files(file_number)%filename, Status='Replace')
-    iunit=files(file_number)%unit_no
-    Write (iunit,'(a)') '#  Time (ps)      '//Trim(what)//'         '//Trim(what)//' (max)     '&
-                       &//Trim(what)//' (min)      STD' 
-    i=1
-    flag=.True.    
-    Do While ((i<=traj_data%analysis%Ninterval) .And. flag)
+    Character(Len=256) :: quantity
+
+    If (Trim(what) == 'CHEM_OCF') Then
+      quantity='OCF'
+    Else
+      quantity=Trim(what)
+    End If
+    
+    fcompute=.True.
+    traj_data%analysis%normalised=.False.
+    
+    ! Check the value at t=0
+    If (Trim(what) /= 'MSD') Then
       sum_i=0.0_wp
       Nnet=0
       Do k= 1, traj_data%analysis%N_seg
-        If(i<=traj_data%analysis%max_points(k)) Then
-          Nnet=Nnet+1
-          sum_i=sum_i+traj_data%analysis%variable(i,k)
-        End If
+        Nnet=Nnet+1
+        sum_i=sum_i+traj_data%analysis%variable(1,k)
       End Do
-
-      ! Compute average
+      
       If (Nnet > 0) Then
-        average=sum_i/Nnet
-        If (Nnet>1) Then
-          sum_i=0.0_wp
-          Do k= 1, traj_data%analysis%N_seg
-            If(i<=traj_data%analysis%max_points(k)) Then
-              sum_i=sum_i+(traj_data%analysis%variable(i,k)-average)**2
+        norma=sum_i/Nnet
+        If (Abs(norma-1.0_wp)>initial_tolerance)then
+          If (Abs(norma)< initial_tolerance) Then
+            Write (message,'(1x,a)') '*** WARNING: Problems with the computation of the average '//Trim(what)
+            Call info(message, 1)
+            Write (message,'(1x,a)') '             This is likely due to poor statistics'
+            Call info(message, 1)
+            If (traj_data%region%define%fread) Then
+              Write (message,'(1x,a)') '             Please check the settings: the &region block might be too small.'
+            Else
+              Write (message,'(1x,a)') '             Please check the settings'
             End If
-          End Do
-          std=sqrt(sum_i/(Nnet-1))
-        Else
-          std=0.0_wp
+            Call info(message, 1)
+            Call info('***', 1)
+          Else
+            If (traj_data%analysis%normalise_at_t0%stat) Then
+              Write (message,'(1x,a)') '*** INFO: The average '//Trim(what)//' has been normalised at t=0.'
+              Call info(message, 1)
+              traj_data%analysis%variable=traj_data%analysis%variable/norma
+              traj_data%analysis%normalised=.True.
+            Else
+              Write (message,'(1x,a)') '*** WARNING: The average '//Trim(what)//' is NOT normalised at t=0.'
+              Call info(message, 1)
+              If (traj_data%region%define%fread) Then
+                Write (message,'(1x,a)') '             Please check the settings: the region defined in the &region&
+                                         & block for analysis might be too small.'
+              End If
+              
+              If (traj_data%analysis%invoke%fread) Then
+                Write (message,'(1x,a)') '    To normalise, set the "normalise_at_t0" directive to .True. in the&
+                                        & &data_analysis block.'
+              Else 
+                Write (message,'(1x,a)') '    To normalise, use the &data_analysis block and set the "normalise_at_t0"&
+                                        & directive to .True.'
+              End If
+              Call info(message, 1)                       
+              Call info(' ***', 1) 
+            End If
+          End If
         End If
       Else
-        flag=.False.
+        Write (message,'(1x,a)') '**** PROBLEMS: The average '//Trim(what)//' could not be computed.'
+        Call info(message, 1)
+        Write (message,'(1x,a)') '             This is likely due to poor statistics'
+        Call info(message, 1)
+         If (traj_data%region%define%fread) Then
+           Write (message,'(1x,a)') '             Please check the settings: the region defined in the &region&
+                                   & block for analysis might be too small.'
+         End If
+        Call info(message, 1)
+        Call info(' ***', 1)
       End If
+    End If
+    
+    If (fcompute) Then             
+      ! Print header
+      Open(Newunit=files(file_number)%unit_no, File=files(file_number)%filename, Status='Replace')
+      iunit=files(file_number)%unit_no
+      If (Trim(what) == 'MSD') Then
+        Write (iunit,'(a)') '#  Average MSD and STD (in Angstrom^2) for the coordinate(s) "'//&
+                        &Trim(traj_data%msd%select%type)//'" of the monitored species'
+      End If
+      Write (iunit,'(a)') '#  Time (ps)      '//Trim(quantity)//'          STD' 
       
-      If (flag) Then
-        If(average+std > 1.0_wp) Then
-          maximum=1.0_wp
-        Else
-          maximum=average+std
-        End If
-        If (Trim(what)=='TCF')Then
-          If((average-std) < 0.0_wp) Then
-            minimum=0.0_wp
+      i=1
+      flag=.True.    
+      Do While ((i<=traj_data%analysis%Ninterval) .And. flag)
+        sum_i=0.0_wp
+        Nnet=0
+        Do k= 1, traj_data%analysis%N_seg
+          If(i<=traj_data%analysis%max_points(k)) Then
+            Nnet=Nnet+1
+            sum_i=sum_i+traj_data%analysis%variable(i,k)
+          End If
+        End Do
+      
+        ! Compute average
+        If (Nnet > 0) Then
+          average=sum_i/Nnet
+          If (Nnet>1) Then
+            sum_i=0.0_wp
+            Do k= 1, traj_data%analysis%N_seg
+              If(i<=traj_data%analysis%max_points(k)) Then
+                sum_i=sum_i+(traj_data%analysis%variable(i,k)-average)**2
+              End If
+            End Do
+            std=sqrt(sum_i/(Nnet-1))
           Else
-            minimum=average-std
+            std=0.0_wp
           End If
         Else
-          minimum=average-std
+          flag=.False.
         End If
-        Write(iunit,'(5(f10.3, 3x))') (i-1)*traj_data%timestep%value/1000.0_wp, average, maximum, minimum, std
-      End If
-      i=i+1
-    End Do
-    Write (message,'(1x,a)') 'The average '//Trim(what)//' was printed to the "'//&
-                             &Trim(files(file_number)%filename)//'" file.'
-    Call info(message, 1)
-    Close(iunit)
-  
+        
+        If (flag) Then
+          If (Trim(what)=='MSD') Then
+            average_net=average
+          Else
+            If(average > 1.0_wp) Then
+              average_net=1.0_wp
+            Else
+              average_net=average
+            End If
+          End If  
+          Write(iunit,'(3(f10.3, 3x))') (i-1)*traj_data%timestep%value/1000.0_wp, average_net, std
+        End If
+        i=i+1
+        
+      End Do
+      Write (message,'(1x,a)') 'The average '//Trim(what)//' was printed to the "'//&
+                               &Trim(files(file_number)%filename)//'" file.'
+      Call info(message, 1)
+      Close(iunit)
+    End If 
+    
+    
   End Subroutine average_segments
   
   Subroutine orientational_correlation_function(files, traj_data)
@@ -2356,23 +3186,25 @@ Contains
     Real(Kind=wp)     :: suma_i 
     Real(Kind=wp)     :: time
     Real(Kind=wp)     :: base_time
-    Logical           :: set_u0, fzero
+    Logical           :: set_u0
     Character(Len=256) :: message
     
     Logical           :: terminated(traj_data%Nmax_species)
 
-    ! Print header
-    Open(Newunit=files(FILE_OCF)%unit_no, File=files(FILE_OCF)%filename, Status='Replace')
-    iunit=files(FILE_OCF)%unit_no
-    Write (iunit,'(a)') '#  Time (ps)           OCF' 
-
+    If (traj_data%ocf%print_all_intervals%stat) Then
+      ! Print header
+      Open(Newunit=files(FILE_OCF_ALL)%unit_no, File=files(FILE_OCF_ALL)%filename, Status='Replace')
+      iunit=files(FILE_OCF_ALL)%unit_no
+      Write (iunit,'(a)') '#  OCF Analysis for all the intervals' 
+      Write (iunit,'(a)') '#  Time (ps)         OCF' 
+    End If
+    
     !Set max_points to beyond the interval
     traj_data%analysis%max_points=traj_data%analysis%Ninterval+1
-    
+
     Do k= 1, traj_data%analysis%N_seg
       set_u0=.True.
       l=0
-      fzero=.False.
       ! Initialise terminated tag
       Do j = 1, traj_data%Nmax_species
         terminated(j)=.False.
@@ -2392,7 +3224,7 @@ Contains
           Nini_species=0
           Do j = 1, traj_data%Nmax_species
             If (traj_data%species(i,j)%alive) Then
-              Call compute_rotation_vector(traj_data, i, j)
+              Call rotation_vector_monitored_species(traj_data, i, j)
               traj_data%species(i,j)%u0(:,1)=traj_data%species(i,j)%u(:,1)
               If (Trim(traj_data%ocf%u_definition%type) == 'bond_12-13') Then
                 traj_data%species(i,j)%u0(:,2)=traj_data%species(i,j)%u(:,2)
@@ -2403,7 +3235,7 @@ Contains
           set_u0=.False.
           If (Nini_species==0) Then
             Write (message,'(1x,a,2x,i6,a)') '***PROBLEMS: the code could not identify a single monitored species for frame ', i,&
-                                            & '. Plase review the settings for the &monitored_species block'
+                                            & '. Please review the settings for the &monitored_species block'
             Call info(message, 1)
             Call error_stop(' ')
           End If
@@ -2414,57 +3246,87 @@ Contains
         Do j = 1, traj_data%Nmax_species
           If(.Not. terminated(j)) Then
             If (traj_data%species(i,j)%alive) Then
-              Call compute_rotation_vector(traj_data, i, j)
-              Call evaluate_correlation_term(traj_data, i, j, suma_i)  
+              Call rotation_vector_monitored_species(traj_data, i, j)
+              Call orientational_correlation_term_monitored_species(traj_data, i, j, suma_i)  
             Else
               terminated(j)=.True.
             End If
           End If  
         End Do
-
+    
         If (i==traj_data%analysis%seg_indx(2,k)) Then
           If (traj_data%N_species /= 0) Then
-           suma_i=suma_i/traj_data%N_species
-           traj_data%analysis%variable(l,k)=suma_i
-           Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+            suma_i=suma_i/traj_data%N_species
+            traj_data%analysis%variable(l,k)=suma_i
+            If (traj_data%ocf%print_all_intervals%stat) Then
+              Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
+            End If
           End If  
           terminated(:)=.False.
           set_u0=.True.
-          If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
-            If (k /= traj_data%analysis%N_seg) Then
-             Write (iunit,*) ' '
-             Write (iunit,'(a)') '# Reseting the OCF analysis....' 
-             Write (iunit,'(a)') '#  Time (ps)           OCF' 
-            End If
+          If (traj_data%ocf%print_all_intervals%stat) Then
+            If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
+              If (k /= traj_data%analysis%N_seg) Then
+               Write (iunit,'(a)') '#  Time (ps)         OCF' 
+              End If
+            End If  
           End If                      
         Else
-          If ((traj_data%N_species) /= 0 .And. (.Not. fzero)) Then
+          If ((traj_data%N_species) /= 0) Then
             suma_i=suma_i/traj_data%N_species
-            traj_data%analysis%variable(l,k)=suma_i
-            Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
           Else  
-            fzero=.True.
-            traj_data%analysis%max_points(k)=i-1
+            suma_i=0.0_wp
+          End If
+          traj_data%analysis%variable(l,k)=suma_i
+          If (traj_data%ocf%print_all_intervals%stat) Then
+            Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
           End If
         End If
       End Do
     End Do
     
-    Write (message,'(1x,a)') 'The orientational correlation function analysis was printed to the "'//&
-                             &Trim(files(FILE_OCF)%filename)//'" file.'
-    Call info(message, 1)
-
-    Close(iunit)
-    
-    If (traj_data%analysis%N_seg /=1 ) Then
-      Call average_segments(files, traj_data, FILE_OCF_AVG, 'OCF')    
+    If (traj_data%ocf%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'The OCF analysis for the multiple time intervals was printed to the "'&
+                                 &//Trim(files(FILE_OCF_ALL)%filename)//'" file.'
+      Else
+        Write (message,'(1x,a)') 'The OCF analysis was printed to the "'//Trim(files(FILE_OCF_ALL)%filename)//'" file&
+                                 & and corresponds to a single (only one) time interval.'
+      End If
+      Call info(message, 1)
+      Close(iunit)
     End If
-
+    
+    Call average_segments(files, traj_data, FILE_OCF_AVG, 'OCF')
+    If (traj_data%analysis%N_seg ==1 ) Then
+      Write (message,'(1x,a)') 'WARNING: A single time interval was used to compute the average OCF! The computed STD&
+                                & is zero. Use/Check the &data_analysis block to improve the statistics.'
+      Call info(message, 1)
+    End If
+    
+    If (.Not. traj_data%ocf%print_all_intervals%stat) Then
+      If (traj_data%analysis%N_seg /=1 ) Then 
+        Write (message,'(1x,a)') 'In case the user wants to print the OCF analysis for all time intervals,&
+                                & the "print_all_intervals" directive (within the &ocf block) must be set to .True.'
+        Call info(message, 1)
+      End If
+    Else
+      If (traj_data%analysis%N_seg ==1 .And. (.Not. traj_data%analysis%normalised)) Then
+        Write (message,'(1x,a)') 'WARNING: Files "'&
+                               &//Trim(files(FILE_OCF_ALL)%filename)//'" and "'//Trim(files(FILE_OCF_AVG)%filename)//&
+                               &'" contain redundant results.'
+        Call info(message, 1)
+      End If
+    End If
+    
+    Call info(' ', 1)
+    Call refresh_out(files)
+    
   End Subroutine orientational_correlation_function
 
-  Subroutine compute_rotation_vector(traj_data, i, j)  
+  Subroutine rotation_vector_monitored_species(traj_data, i, j)  
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to compute the rotation vector
+    ! Subroutine to compute the rotation vector of the monitored species
     !
     ! author    - i.scivetti March 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2518,7 +3380,7 @@ Contains
       traj_data%species(i,j)%u(:,1)=traj_data%species(i,j)%u(:,1)/norm2(traj_data%species(i,j)%u(:,1))
     End If    
     
-  End Subroutine compute_rotation_vector  
+  End Subroutine rotation_vector_monitored_species  
 
   Subroutine within_region(traj_data, i, m, flag)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2564,10 +3426,10 @@ Contains
     
   End Subroutine within_region
   
-  Subroutine evaluate_correlation_term(traj_data, i, j, suma_i)  
+  Subroutine orientational_correlation_term_monitored_species(traj_data, i, j, suma_i)  
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to compute the contribution to the correlation from species j
-    ! for the frame i (cij)
+    ! Subroutine to compute the contribution to the correlation for the relevant 
+    ! species j at the MD frame i (cij)
     !
     ! author    - i.scivetti March 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2621,7 +3483,7 @@ Contains
 
     End If
 
-  End Subroutine evaluate_correlation_term  
+  End Subroutine orientational_correlation_term_monitored_species  
   
   Subroutine obtain_number_frames(files, model_data, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2691,7 +3553,7 @@ Contains
     End If
 
     ! Check timestep
-    Call check_time_directive(traj_data%timestep, error_set, .True.)
+    Call check_time_directive(traj_data%timestep, 'timestep', error_set, .True.)
     
     ! Check ensemble
     If (traj_data%ensemble%fread) Then
@@ -2750,6 +3612,12 @@ Contains
     If (traj_data%lifetime%invoke%fread) Then
       Call check_lifetime(files, traj_data)
     End If 
+
+    ! Check info &orientational_chemistry 
+    If (traj_data%chem_ocf%invoke%fread) Then
+      Call check_orientational_chemistry(files, traj_data)
+    End If 
+    
     
   End Subroutine check_trajectory_settings
 
@@ -2843,9 +3711,9 @@ Contains
     End If
     
     If (m==3) Then
-       Write (messages(1),'(1x,a)') 'WARNING: the &region block contains no data!' 
+       Write (messages(1),'(1x,a)') 'ERROR: the &region block contains no settings!' 
        Call info(messages, 1)
-       traj_data%region%define%fread=.False.
+       Call error_stop(' ')
     End If
     
   End Subroutine check_region
@@ -2950,7 +3818,8 @@ Contains
         Write (messages(1),'(2(1x,a))') Trim(error_set), 'Index "'//Trim(Adjustl(word))//'" (defined in list_indexes)&
                                        & does not correspond to the atomic tag "'//Trim(traj_data%unchanged%tag%type)//'".'  
         Write (messages(2),'((1x,a))') 'According to the &input_composition block, this index corresponds to atomic&
-                                       & tag "'//Trim(model_data%config%atom(k)%tag)//'". Please review the labels for the model'
+                                       & tag "'//Trim(model_data%config%atom(k)%tag)//'".&
+                                       & Please review the labels and indexes of the atomic model'
         Call info(messages, 2)
         Call error_stop(' ')
       End If
@@ -3220,18 +4089,81 @@ Contains
     Type(file_type),    Intent(In   ) :: files(:)
     Type(traj_type),    Intent(InOut) :: traj_data
 
-    Character(Len=256)  :: error_set
+    Character(Len=256)  :: error_set, message
 
     error_set = '***ERROR in the &data_analysis block of file '//Trim(files(FILE_SET)%filename)//' -'
 
     If (traj_data%analysis%invoke%fread) Then
-      Call check_time_directive(traj_data%analysis%time_interval,  error_set, .False.)
-      Call check_time_directive(traj_data%analysis%ignore_initial, error_set, .False.)
-      Call check_time_directive(traj_data%analysis%overlap_time,  error_set, .False.)
-    End If
+      Call check_time_directive(traj_data%analysis%time_interval, 'time_interval',  error_set, .False.)
+      Call check_time_directive(traj_data%analysis%ignore_initial, 'ignore_initial', error_set, .False.)
+      Call check_time_directive(traj_data%analysis%overlap_time, 'overlap_time' ,error_set, .False.)
 
+      If (traj_data%analysis%normalise_at_t0%fread) Then
+        If (traj_data%analysis%normalise_at_t0%fail) Then
+          Write (message,'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                    & "normalise_at_t0" (choose either .True. or .False.)'
+          Call info(message,1)
+          Call error_stop(' ')
+        End If
+      Else
+        traj_data%analysis%normalise_at_t0%stat=.False.
+      End If
+
+    Else
+      traj_data%analysis%normalise_at_t0%stat=.False.
+    End If
+    
   End Subroutine check_data_analysis
 
+  Subroutine check_orientational_chemistry(files, traj_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check the settings of the &orientational_chemistry block
+    !
+    ! author    - i.scivetti Febraury 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),    Intent(In   ) :: files(:)
+    Type(traj_type),    Intent(InOut) :: traj_data
+
+    Character(Len=256)  :: error_set
+    Character(Len=256)  :: messages(2)
+
+    error_set = '***ERROR in the &orientational_chemistry block of file '//Trim(files(FILE_SET)%filename)//' -'
+
+    If (traj_data%chem_ocf%variable%fread) Then
+      If (traj_data%chem_ocf%variable%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Wrong (or missing) settings for the "variable" directive.'
+        Call info(messages, 1)
+        Call error_stop(' ')
+      Else
+        If (Trim(traj_data%chem_ocf%variable%type)/='special_pair'     .And. &
+            Trim(traj_data%chem_ocf%variable%type)/='acceptor_donor_transfer_couple')  Then
+             Write (messages(1),'(2(1x,a))') Trim(error_set), &
+                                    & 'Wrong input for "variable". Valid options:&
+                                    & "special_pair" or "acceptor_donor_transfer_couple"'
+          Call info(messages, 1)
+          Call error_stop(' ')
+        End If
+      End If
+    Else
+       Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "variable" directive'
+       Write (messages(2),'( (1x,a))') 'Valid options: "special_pair" or "acceptor_donor_transfer_couple"'
+       Call info(messages, 2)
+       Call error_stop(' ')
+    End If
+
+    If (traj_data%chem_ocf%print_all_intervals%fread) Then
+      If (traj_data%chem_ocf%print_all_intervals%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                  & "print_all_intervals" (choose either .True. or .False.)'
+        Call info(messages,1)
+        Call error_stop(' ')
+      End If
+    Else
+      traj_data%chem_ocf%print_all_intervals%stat=.False.
+    End If
+    
+  End Subroutine check_orientational_chemistry
+  
   Subroutine check_lifetime(files, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check the settings of the &lifetime block
@@ -3246,7 +4178,7 @@ Contains
 
     error_set = '***ERROR in the &lifetime block of file '//Trim(files(FILE_SET)%filename)//' -'
 
-    Call check_time_directive(traj_data%lifetime%rattling_wait,  error_set, .False.)
+    Call check_time_directive(traj_data%lifetime%rattling_wait, 'rattling_wait' ,error_set, .False.)
 
     If (.Not. traj_data%lifetime%rattling_wait%fread) Then
       traj_data%lifetime%rattling_wait%value= 0.0_wp
@@ -3259,32 +4191,43 @@ Contains
         Call info(messages, 1)
         Call error_stop(' ')
       Else
-        If (Trim(traj_data%lifetime%method%type)/='hicf'  .And. &
-            Trim(traj_data%lifetime%method%type)/='hdcf'  .And. &
-            Trim(traj_data%lifetime%method%type)/='hdcf*'  .And. &
-            Trim(traj_data%lifetime%method%type)/='hdcf-2s') Then
+        If (Trim(traj_data%lifetime%method%type)/='hicf'     .And. &
+            Trim(traj_data%lifetime%method%type)/='hdcf')  Then
              Write (messages(1),'(2(1x,a))') Trim(error_set), &
-                                    &'Wrong input for "method". Valid options: "HICF", "HDCF", "HDCF*" and "HDCF-2s"'
+                                    & 'Wrong input for "method". Valid options:&
+                                    & "HICF" and "HDCF"'
           Call info(messages, 1)
           Call error_stop(' ')
         End If
       End If
     Else
        Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "method" directive'
-       Write (messages(2),'( (1x,a))') 'Valid options: "HICF", "HDCF", "HDCF*" and "HDCF-2s"'
+       Write (messages(2),'( (1x,a))') 'Valid options: "HICF" and "HDCF"'
        Call info(messages, 2)
        Call error_stop(' ')
+    End If
+
+    If (traj_data%lifetime%print_all_intervals%fread) Then
+      If (traj_data%lifetime%print_all_intervals%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                  & "print_all_intervals" (choose either .True. or .False.)'
+        Call info(messages,1)
+        Call error_stop(' ')
+      End If
+    Else
+      traj_data%lifetime%print_all_intervals%stat=.False.
     End If
     
   End Subroutine check_lifetime
 
-  Subroutine check_time_directive(T, error_set, kill)
+  Subroutine check_time_directive(T, tag, error_set, kill)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check time related directivesd
     !
     ! author    - i.scivetti March 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(in_param),          Intent(InOut)  :: T
+    Character(Len=*),        Intent(In   )  :: tag 
     Character(Len=*),        Intent(In   )  :: error_set
     Logical,                 Intent(In   )  :: kill
 
@@ -3320,7 +4263,7 @@ Contains
       End If
     Else 
       If (kill)then
-        Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "'//Trim(T%tag)//'" directive'
+        Write (messages(1),'(2(1x,a))')  Trim(error_set), 'The user must define the "'//Trim(tag)//'" directive'
         Call info(messages, 1)
         Call error_stop(' ')
       End If
@@ -3529,6 +4472,17 @@ Contains
     Else
       traj_data%msd%pbc=.True.
     End If
+
+    If (traj_data%msd%print_all_intervals%fread) Then
+      If (traj_data%msd%print_all_intervals%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                  & "print_all_intervals" (choose either .True. or .False.)'
+        Call info(messages,1)
+        Call error_stop(' ')
+      End If
+    Else
+      traj_data%msd%print_all_intervals%stat=.False.
+    End If
     
   End Subroutine check_msd
   
@@ -3589,6 +4543,17 @@ Contains
        Call error_stop(' ')
     End If
     
+    If (traj_data%ocf%print_all_intervals%fread) Then
+      If (traj_data%ocf%print_all_intervals%fail) Then
+        Write (messages(1),'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                  & "print_all_intervals" (choose either .True. or .False.)'
+        Call info(messages,1)
+        Call error_stop(' ')
+      End If
+    Else
+      traj_data%ocf%print_all_intervals%stat=.False.
+    End If
+    
   End Subroutine check_ocf
   
   Subroutine print_trajectory_settings(traj_data, model_data) 
@@ -3611,38 +4576,52 @@ Contains
                                  &//Trim(traj_data%ensemble%type)//'" ensemble and was recorded in "'&
                                  &//Trim(model_data%input_geometry_format%type)//'" format'
     Call info(messages, 1)
-    Write (messages(1),'(1x,a,f5.2,a)') '- the time step between recorded configurations is ', traj_data%timestep%value, ' fs'
+    Write(word,'(f10.2)') traj_data%timestep%value
+    Write (messages(1),'(1x,a,f5.2,a)') '- the time step between recorded configurations is '//Trim(Adjustl(word))//' fs'
     Call info(messages, 1)
 
-    If (traj_data%ocf%invoke%fread .Or. traj_data%msd%invoke%fread & 
-                                 & .Or. traj_data%lifetime%invoke%fread) Then
-      If (traj_data%analysis%time_interval%fread) Then
-        Write(word,'(f8.3)') traj_data%analysis%time_interval%value/1000.0_wp
-        If (traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') '- the data analysis will be executed using time intervals of '&
-                                     &//Trim(Adjustl(word))//' ps (this does not apply to RDF)' 
-        Else
-          Write (messages(1),'(1x,a)') '- the data analysis will be executed using time intervals of '&
-                                     &//Trim(Adjustl(word))//' ps' 
-        End If                             
+    If (traj_data%analysis%ignore_initial%fread) Then
+      Write(word,'(f8.3)') traj_data%analysis%ignore_initial%value/1000.0_wp
+      Write (messages(1),'(1x,a)') '- the initial '//Trim(Adjustl(word))//' ps of the trajectory&
+                                   & will be discarded' 
+      Call info(messages, 1)
+    End If
+    
+    If (traj_data%ocf%invoke%fread .Or. traj_data%chem_ocf%invoke%fread .Or. &
+        traj_data%msd%invoke%fread .Or. traj_data%lifetime%invoke%fread) Then
+      If (traj_data%analysis%time_interval%fread .Or. &
+          (traj_data%analysis%overlap_time%fread  .And. (traj_data%analysis%N_seg /=1))) Then
+        Write (messages(1),'(1x,a)') 'Instructions for analysis in time segments (&data_analysis) applied to:' 
         Call info(messages, 1)
-      End If
-      If (traj_data%analysis%ignore_initial%fread) Then
-        Write(word,'(f8.3)') traj_data%analysis%ignore_initial%value/1000.0_wp
-        Write (messages(1),'(1x,a)') '- the initial '//Trim(Adjustl(word))//' ps of the trajectory&
-                                     & will be discarded' 
-        Call info(messages, 1)
-      End If
-      If (traj_data%analysis%overlap_time%fread  .And. (traj_data%analysis%N_seg /=1)) Then
-        Write(word,'(f8.3)') traj_data%analysis%overlap_time%value/1000.0_wp
-        If (traj_data%rdf%invoke%fread) Then
-          Write (messages(1),'(1x,a)') '- the starting points of segments for analysis are separated&
-                                       & by '//Trim(Adjustl(word))//' ps (this does not apply to RDF)'
-        Else
-          Write (messages(1),'(1x,a)') '- the starting points of segments for analysis are separated&
-                                       & by '//Trim(Adjustl(word))//' ps'
+        If (traj_data%ocf%invoke%fread) Then
+          Write (messages(1),'(5x,a)') '* OCF'
+          Call info(messages, 1)
+        End If  
+        If (traj_data%lifetime%invoke%fread) Then
+          Write (messages(1),'(5x,a)') '* TCF'
+          Write (messages(2),'(5x,a)') '* SPCF'
+          Call info(messages, 2)
+        End If  
+        If (traj_data%msd%invoke%fread) Then
+          Write (messages(1),'(5x,a)') '* MSD'
+          Call info(messages, 1)
         End If
-        Call info(messages, 1)
+        If (traj_data%chem_ocf%invoke%fread) Then
+          Write (messages(1),'(5x,a)') '* CHEM_OCF'
+          Call info(messages, 1)
+        End If
+        If (traj_data%analysis%time_interval%fread) Then
+          Write(word,'(f8.3)') traj_data%analysis%time_interval%value/1000.0_wp
+          Write (messages(1),'(2x,a)') '- the data analysis will be executed using time intervals of '&
+                                       &//Trim(Adjustl(word))//' ps' 
+          Call info(messages, 1)
+        End If
+        If (traj_data%analysis%overlap_time%fread  .And. (traj_data%analysis%N_seg /=1)) Then
+          Write(word,'(f8.3)') traj_data%analysis%overlap_time%value/1000.0_wp
+          Write (messages(1),'(2x,a)') '- the starting points of segments for analysis are separated&
+                                         & by '//Trim(Adjustl(word))//' ps'
+          Call info(messages, 1)
+        End If
       End If
     End If
     
@@ -3670,65 +4649,84 @@ Contains
           End If
         End If
       End If
-      Write (messages(1),'(1x,a)') 'The definition of the &OCF block will execute a Rotational&
-                                  & Correlation funtion (OCF) analysis, using the species "'&
+      Write (messages(1),'(1x,a)') 'The definition of the "&OCF" block will compute the Orientational&
+                                  & Correlation Funtion (OCF) of the species "'&
                                   &//Trim(model_data%species_definition%name%type)//&
-                                  & '" defined in the &monitored_species block and the following settings:'
-      Write (messages(2),'(1x,a)') '- the method to compute the attached rotating unit vector is: '//&
+                                  & '" (defined in the &monitored_species block) as follows:'
+      Write (messages(2),'(1x,a)') '- the attached rotating unit vector is defined with the method: '//&
                                   & Trim(traj_data%ocf%u_definition%type)
-      Write (messages(3),'(1x,a, i2)') '- the correlation terms are computed using a legendre polynomial of order ',&
+      Write (messages(3),'(1x,a, i2)') '- the correlation terms are obtained using the Legendre polynomial of order ',&
                                   & traj_data%ocf%legendre_order%value
       Call info(messages, 3)
     End If
 
     If (traj_data%msd%invoke%fread) Then
       Call info(' ', 1)
-      Write (messages(1),'(1x,a)') 'The definition of the &MSD block will execute a Mean Square&
-                                  & Displacement analysis, using the species "'&
+      Write (messages(1),'(1x,a)') 'The definition of the "&MSD" block will execute a Mean Square&
+                                  & Displacement analysis of the species "'&
                                   &//Trim(model_data%species_definition%name%type)//&
-                                  & '" defined in the &monitored_species block and the following settings:'
+                                  & '" (defined in the &monitored_species block) as follows:'
       Write (messages(2),'(1x,a)') '- the values will be computed for the coordinates(s): '//&
                                   & Trim(traj_data%msd%select%type)
       Call info(messages, 2)
 
       If (traj_data%msd%pbc_xyz%fread) Then
-        Write (messages(1),'(1x,a)') '- the settings for the "pbc_xyz" directive uses (or not) periodic&
-                                     & boundary condition for each coordinate' 
+        Write (messages(1),'(1x,a)') '- the "pbc_xyz" directive specifies which coordinate uses (or not) periodic&
+                                     & boundary conditions' 
         Call info(messages, 1)                             
       End If
     End If
 
     If (traj_data%lifetime%invoke%fread) Then
       Call info(' ', 1)
-      Write (messages(1),'(1x,a)') 'The definition of the &lifetime block will compute:'
-      Write (messages(2),'(1x,a)') '- the transfer correlation function (TCF) for the changing species&
+      Write (messages(1),'(1x,a)') 'The definition of the "&lifetime" block will compute:'
+      Write (messages(2),'(1x,a)') '- the Transfer Correlation Function (TCF) and the Special Pair Correlation&
+                                  & Function (SPCF) for the changing chemical species&
                                   & using the method: '//Trim(traj_data%lifetime%method%type)
-      Write (messages(3),'(1x,a)') '- the residence times for each species separately (file RES_TIMES)'
+      Write (messages(3),'(1x,a)') '- the residence times for each changing species (file RES_TIMES):'
       If (traj_data%lifetime%rattling_wait%fread) Then
         Write(word,'(f8.3)') traj_data%lifetime%rattling_wait%value/1000.0_wp
-        Write (messages(4),'(1x,a)') 'Rattling lifetimes lower than '//Trim(Adjustl(word))//' ps will be discarded.'  
+        Write (messages(4),'(3x,a)') 'Rattling times lower than '//Trim(Adjustl(word))//' ps will&
+                                    & be discarded for the computation of residence times'  
       Else
-        Write (messages(4),'(1x,a)') 'Rattling effects are included in the calculation.'
+        Write (messages(4),'(3x,a)') 'Rattling effects are included in the calculation&
+                                     & for the computation of residence times'
       End If
       Call info(messages, 4)
+    End If
+
+    If (traj_data%chem_ocf%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the "&orientational_chemistry" block will compute&
+                                  & OCF for the changing chemical species (CHEM_OCF) using the "'&
+                                  &//Trim(traj_data%chem_ocf%variable%type)//'" as the orientational vector'
+      Call info(messages, 1)
+    End If
+    
+    If (traj_data%unchanged%invoke%fread) Then
+      Call info(' ', 1)
+      Write (messages(1),'(1x,a)') 'The definition of the "&track_unchanged_chemistry" block will print the positions&
+                                  & of the selected atomic indexes with unchanged chemistry along the trajectory.'
+      Call info(messages, 1)
     End If
     
     If (traj_data%rdf%invoke%fread) Then
       Call info(' ', 1)
-      Write (messages(1),'(1x,a)') 'The definition of the &RDF block will compute the Radial&
-                                  & Distribution Funtion (RDF) and the Coordination Numbers (CNs) using:'
+      Write(word,'(f10.2)') traj_data%rdf%dr%value
+      Write (messages(1),'(1x,a)') 'The definition of the "&RDF" block will compute the Radial&
+                                  & Distribution Funtion (RDF) and the Coordination Numbers (CN) using:'
       Write (messages(2),'(1x,a)') '- the tags defined in "tags_species_a"  and "tags_species_b"'
-      Write (messages(3),'(1x,a,f6.3,a)') '- a discretization of ', traj_data%rdf%dr%value, ' Angstrom for the radius'
+      Write (messages(3),'(1x,a)') '- a discretization of '//Trim(Adjustl(word))//' Angstrom'
       Call info(messages, 3)
     End If
 
     If (traj_data%coord_distrib%invoke%fread) Then
       Call info(' ', 1)
-      Write (messages(1),'(1x,a)') 'The definition of the &coord_distrib block will compute the distribution&
+      Write(word,'(f10.2)') traj_data%coord_distrib%delta%value
+      Write (messages(1),'(1x,a)') 'The definition of the "&coord_distrib block" will compute the distribution&
                                   & of the '//Trim(traj_data%coord_distrib%coordinate%type)//'-values for all&
                                   & the "'//Trim(traj_data%coord_distrib%species)//'" species in the whole system'
-      Write (messages(2),'(1x,a,f6.3,a)') 'with a selected discretization of ',&
-                                         & traj_data%coord_distrib%delta%value, ' Angstrom for the coordinate.'                            
+      Write (messages(2),'(1x,a)') 'with a selected discretization of '//Trim(Adjustl(word))//' Angstrom for the coordinate.'
       Call info(messages, 2)
     End If
     
@@ -3745,11 +4743,14 @@ Contains
         Write (messages(1),'(1x,a)') '- angles, using the settings of "&angle_parameters"'
         Call info(messages, 1)                            
       End If
+      Write (messages(1),'(1x,a)') 'corresponding to the species "'//Trim(model_data%species_definition%name%type)//&
+                                  & '" (defined in the &monitored_species block).'
+      Call info(messages, 1)                          
     End If
 
     If (model_data%nndist%invoke%fread) Then
       Call info(' ', 1)
-      Write (messages(1),'(1x,a)') 'The definition of the "&shortest_pair" block will compute probability distribution&
+      Write (messages(1),'(1x,a)') 'The definition of the "&selected_nn_distances" block will compute probability distribution&
                                & of the shortest distance of the selected pair of species (this is not RDF)'
       Call info(messages, 1)                             
     End If
@@ -3767,19 +4768,31 @@ Contains
         Write (messages(1),'(1x,a)') '- angles, using the settings of "&angle_parameters"'
         Call info(messages, 1)                            
       End If
-      Write (messages(1),'(1x,a)') 'only considering the two nearest monitored species around each monitored species.'
-      Call info(messages, 1)                            
+      Write (messages(1),'(1x,a)') 'by considering the two closest "'//Trim(model_data%species_definition%name%type)//& 
+                                  &'" species to each "'//Trim(model_data%species_definition%name%type)//'" species&
+                                  & (see the &monitored_species block).'
+      Call info(messages, 1)
     End If
     
     If (traj_data%region%define%fread) Then
       Call info(' ', 1)
-      If (traj_data%ocf%invoke%fread .Or. traj_data%msd%invoke%fread .Or. traj_data%rdf%invoke%fread .Or. &
-        model_data%species_definition%intra_geom%invoke%fread) Then
+      If (traj_data%ocf%invoke%fread .Or. &
+          traj_data%msd%invoke%fread .Or. &
+          traj_data%rdf%invoke%fread .Or. &
+          traj_data%chem_ocf%invoke%fread .Or. &
+          model_data%nndist%invoke%fread .Or. &
+          model_data%species_definition%intra_geom%invoke%fread .Or. &
+          model_data%species_definition%inter_geom%invoke%fread) Then
         Write (messages(1),'(1x,a)') 'From the definition of the "&region" block, the computation of'
         Call info(messages, 1)
         If (traj_data%ocf%invoke%fread) Then
           Write (messages(1),'(3x,a)') '- OCF'
           Call info(messages, 1)
+        End If  
+        If (traj_data%lifetime%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- TCF'
+          Write (messages(2),'(3x,a)') '- SPCF'
+          Call info(messages, 2)
         End If  
         If (traj_data%rdf%invoke%fread) Then
           Write (messages(1),'(3x,a)') '- RDF'
@@ -3789,12 +4802,16 @@ Contains
           Write (messages(1),'(3x,a)') '- MSD'
           Call info(messages, 1)
         End If
+        If (traj_data%chem_ocf%invoke%fread) Then
+          Write (messages(1),'(3x,a)') '- CHEM_OCF'
+          Call info(messages, 1)
+        End If
         If (model_data%species_definition%intra_geom%invoke%fread) Then
-          Write (messages(1),'(3x,a)') '- Intramolecular parameters'
+          Write (messages(1),'(3x,a)') '- Intramolecular parameters (monitored species)'
           Call info(messages, 1)
         End If
         If (model_data%species_definition%inter_geom%invoke%fread) Then
-          Write (messages(1),'(3x,a)') '- Intermolecular parameters'
+          Write (messages(1),'(3x,a)') '- Intermolecular parameters (monitored species)'
           Call info(messages, 1)
         End If
         If (model_data%nndist%invoke%fread) Then
@@ -3816,7 +4833,13 @@ Contains
         End Do
         If (traj_data%rdf%invoke%fread) Then
           Write (messages(1),'(1x,a)') 'IMPORTANT: For the RDF analysis, the definition of the &region block&
-                                      & only applies to the species listed in "tags_species_a"'
+                                      & only applies to the species listed in "tags_species_a" (&rdf block)'
+          Call info(messages, 1)
+        End If  
+        If (model_data%nndist%invoke%fread) Then
+          Write (messages(1),'(1x,a)') 'IMPORTANT: For the analysis of the shortest distance distribution,&
+                                      & the definition of the &region block only applies to the species& 
+                                      & listed in "reference_species" (&selected_nn_distances block)'
           Call info(messages, 1)
         End If  
       End If 
@@ -3886,7 +4909,19 @@ Contains
          Call error_stop(' ')
       End If
     End If
-   
+
+    If (traj_data%chem_ocf%invoke%fread) Then
+      If (.Not. model_data%change_chemistry%stat) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//' The user has defined the &orientational_chemistry block but&
+                                     & the &search_chemistry block is missing.'
+         Write (messages(2),'(4x,a)') 'The computation of the orientational chemistry is&
+                                     & only possible for systems with changing chemical species'
+         Call info(messages, 2)           
+         Call error_stop(' ')
+      End If
+    End If
+    
+    
   End Subroutine cross_checking
 
   Subroutine copy_to_trajectory(traj_data, model_data, frame)

@@ -58,7 +58,7 @@ if(WITH_TESTING)
   # Name executable + whole path for execution
   set(alc_trajectory "${CMAKE_BINARY_DIR}/bin/${target_name}")
 
-  foreach(test RANGE 1 10 1)
+  foreach(test RANGE 1 11 1)
     do_test("test${test}")
   endforeach()
 

@@ -1,20 +1,20 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Module that:
 ! - reads the SETTINGS file and defines the settings for analysis
-! - checks correctness of defined directives in contrast to the information provided in the
-!   TRAJECTORY file
+! - checks correctness of defined directives
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! Author        - i.scivetti   March 2023
+! Author      - i.scivetti   March 2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module settings 
 
   Use atomic_model,      Only : model_type, &
                                 geo_param_type, & 
                                 geo_spec_type, &
+                                short_dist_type, &
                                 check_length_directive,&
                                 check_model_settings,&
                                 print_model_settings
@@ -87,7 +87,7 @@ Contains
       End If
     End If
 
-    If (present(string)) then
+    If (Present(string)) then
       Call capital_to_lower_case(string)
     End If
 
@@ -238,11 +238,11 @@ Contains
         !Read information inside the block
         Call read_msd(iunit, traj_data)
 
-      Else If (word(1:length) == '&shortest_pair') Then
+      Else If (word(1:length) == '&selected_nn_distances') Then
         Read (iunit, Fmt=*, iostat=io) model_data%nndist%invoke%type
         Call set_read_status(word, io, model_data%nndist%invoke%fread, model_data%nndist%invoke%fail)
         !Read information inside the block
-        Call read_shortest_pair(iunit, model_data%nndist)
+        Call read_selected_nn_distances(iunit, model_data%nndist)
 
       Else If (word(1:length) == '&rdf') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%rdf%invoke%type
@@ -268,6 +268,12 @@ Contains
         !Read information inside the block
         Call read_lifetime(iunit, traj_data)
 
+      Else If (word(1:length) == '&orientational_chemistry') Then
+        Read (iunit, Fmt=*, iostat=io) traj_data%chem_ocf%invoke%type
+        Call set_read_status(word, io, traj_data%chem_ocf%invoke%fread, traj_data%chem_ocf%invoke%fail)
+        !Read information inside the block
+        Call read_orientational_chemistry(iunit, traj_data)
+
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
       ! Directive not recognised. Inform and kill 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
@@ -277,7 +283,6 @@ Contains
                                   &'. Do you use "&" to define a block? If so,&
                                   & make sure the block is valid and has right syntax.'
         Else
-          print*, word
           Write (message,'(1x,a)') Trim(set_error)//' Unknown directive found: "'//Trim(word)//'".&
                                   & Have you correctly defined the previous directives? Have you forgotten something maybe?'
         End If 
@@ -794,7 +799,7 @@ Contains
     Character(Len=256) :: set_error
     
     set_error = '***ERROR in the "&'//Trim(T%tag)//'" block (SETTINGS file).'
-
+    
     Do
       Read (iunit, Fmt=*, iostat=io) word
       
@@ -813,7 +818,11 @@ Contains
       If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
       ! Do nothing if line is a comment of we have an empty line
       Read (iunit, Fmt=*, iostat=io) word
- 
+
+      Else If ((Trim(word)=='only_ref_tag_as_nn') .And. (Trim(T%tag)=='intermol_stat_settings')) Then
+        Read (iunit, Fmt=*, iostat=io) word, T%only_ref_tags_as_nn%stat
+        Call set_read_status(word, io, T%only_ref_tags_as_nn%fread, T%only_ref_tags_as_nn%fail)
+
       Else If (Trim(word)=='&distance_parameters') Then
         Read (iunit, Fmt=*, iostat=io) T%dist%invoke%type
         Call set_read_status(word, io, T%dist%invoke%fread, T%dist%invoke%fail, T%dist%invoke%type)
@@ -829,7 +838,7 @@ Contains
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "'//Trim(T%tag)//'"?'
+                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_'//Trim(T%tag)//'"?'
         Call error_stop(message)
       End If
 
@@ -910,49 +919,54 @@ Contains
   
   End Subroutine read_geom_param
 
-  Subroutine read_shortest_pair(iunit, M)
+  Subroutine read_selected_nn_distances(iunit, M)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to read parameters from the
-    ! &shortest_pair block
+    ! &selected_nn_distances block
     !
     ! author    - i.scivetti Nov 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),     Intent(In   ) :: iunit
-    Type(geo_param_type), Intent(InOut) :: M 
+    Integer(Kind=wi),      Intent(In   ) :: iunit
+    Type(short_dist_type), Intent(InOut) :: M 
     
     Integer(Kind=wi)   :: io, length, i
     Character(Len=256) :: message, word
     Character(Len=256) :: messages(2)
     Character(Len=256) :: set_error
     
-    M%delta%tag='delta'
-    
-    set_error = '***ERROR in "&shortest_pair" block (SETTINGS file).'
+    set_error = '***ERROR in "&selected_nn_distances" block (SETTINGS file).'
 
     Do
       Read (iunit, Fmt=*, iostat=io) word
       
       If (io /= 0) Then
         Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
-                                  & Use "&end_shortest_pair" to close the block.&
+                                  & Use "&end_selected_nn_distances" to close the block.&
                                   & Check if directives are set correctly.'         
         Call error_stop(message) 
       End If  
       
       Call get_word_length(word,length)
       Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_shortest_pair') Exit
-      Call check_for_rubbish(iunit, '&end_shortest_pair')
+      If (Trim(word)=='&end_selected_nn_distances') Exit
+      Call check_for_rubbish(iunit, '&end_selected_nn_distances')
 
       If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
       ! Do nothing if line is a comment of we have an empty line
       Read (iunit, Fmt=*, iostat=io) word
  
-      Else If (Trim(word)=='tag_species') Then
-        M%nspecies=2
-        Read (iunit, Fmt=*, iostat=io) M%tag_species%type, (M%species(i), i=1, M%nspecies) 
-        Call set_read_status(word, io, M%tag_species%fread, M%tag_species%fail, M%tag_species%type)
+      Else If (Trim(word)=='reference_species') Then
+        Read (iunit, Fmt=*, iostat=io) M%tag_reference_species%type, M%reference_species
+        Call set_read_status(word, io, M%tag_reference_species%fread, M%tag_reference_species%fail, M%tag_reference_species%type)
 
+      Else If (Trim(word)=='nn_species') Then
+        Read (iunit, Fmt=*, iostat=io) M%tag_nn_species%type, M%num_nn_species
+        Call prevent_segmentation(iunit, io, M%tag_nn_species%type, M%num_nn_species,&
+                                & 'max_components', max_components, set_error)
+        M%nn_species=' '
+        Read (iunit, Fmt=*, iostat=io) M%tag_nn_species%type, M%num_nn_species, (M%nn_species(i), i=1, M%num_nn_species) 
+        Call set_read_status(word, io, M%tag_nn_species%fread, M%tag_nn_species%fail, M%tag_nn_species%type)
+        
       Else If (Trim(word)=='lower_bound') Then
          Read (iunit, Fmt=*, iostat=io) M%lower_bound%tag, M%lower_bound%value, M%lower_bound%units 
          Call set_read_status(word, io, M%lower_bound%fread, M%lower_bound%fail)
@@ -961,21 +975,21 @@ Contains
          Read (iunit, Fmt=*, iostat=io) M%upper_bound%tag, M%upper_bound%value, M%upper_bound%units 
          Call set_read_status(word, io, M%upper_bound%fread, M%upper_bound%fail)
 
-      Else If (Trim(word)=='delta') Then
-         Read (iunit, Fmt=*, iostat=io) M%delta%tag, M%delta%value, M%delta%units 
-         Call set_read_status(word, io, M%delta%fread, M%delta%fail)
+      Else If (Trim(word)=='dr') Then
+         Read (iunit, Fmt=*, iostat=io) M%dr%tag, M%dr%value, M%dr%units 
+         Call set_read_status(word, io, M%dr%fread, M%dr%fail)
 
       Else
         Write (messages(1),'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.'
-        Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_shortest_pair"? &
+        Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_selected_nn_distances"? &
                                 & Have you defined the directives correctly? See the "use_code.md" file'
         Call info (messages, 2)
         Call error_stop(' ')
       End If
     End Do
   
-  End Subroutine read_shortest_pair
+  End Subroutine read_selected_nn_distances
   
   
   Subroutine read_components_monitored_species(iunit, model_data)
@@ -1311,26 +1325,30 @@ Contains
       Read (iunit, Fmt=*, iostat=io) word
 
       Else If (Trim(word)=='time_interval') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%analysis%time_interval%tag, &
+        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%time_interval%tag, &
                                       & traj_data%analysis%time_interval%value,& 
                                       & traj_data%analysis%time_interval%units
-         Call set_read_status(word, io, traj_data%analysis%time_interval%fread,&
+        Call set_read_status(word, io, traj_data%analysis%time_interval%fread,&
                                       & traj_data%analysis%time_interval%fail)
 
       Else If (Trim(word)=='ignore_initial') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%analysis%ignore_initial%tag, &
+        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%ignore_initial%tag, &
                                       & traj_data%analysis%ignore_initial%value,& 
                                       & traj_data%analysis%ignore_initial%units
-         Call set_read_status(word, io, traj_data%analysis%ignore_initial%fread,&
+        Call set_read_status(word, io, traj_data%analysis%ignore_initial%fread,&
                                       & traj_data%analysis%ignore_initial%fail)
 
       Else If (Trim(word)=='overlap_time') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%analysis%overlap_time%tag, &
+        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%overlap_time%tag, &
                                       & traj_data%analysis%overlap_time%value,& 
                                       & traj_data%analysis%overlap_time%units
-         Call set_read_status(word, io, traj_data%analysis%overlap_time%fread,&
+        Call set_read_status(word, io, traj_data%analysis%overlap_time%fread,&
                                       & traj_data%analysis%overlap_time%fail)
 
+      Else If (word(1:length) == 'normalise_at_t0') Then
+        Read (iunit, Fmt=*, iostat=io) word, traj_data%analysis%normalise_at_t0%stat
+       Call set_read_status(word, io, traj_data%analysis%normalise_at_t0%fread, traj_data%analysis%normalise_at_t0%fail)
+                                      
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
@@ -1518,6 +1536,10 @@ Contains
          Read (iunit, Fmt=*, iostat=io) word, (traj_data%msd%pbc(j), j= 1, 3)
          Call set_read_status(word, io, traj_data%msd%pbc_xyz%fread, traj_data%msd%pbc_xyz%fail)
 
+      Else If (word(1:length) == 'print_all_intervals') Then
+       Read (iunit, Fmt=*, iostat=io) word, traj_data%msd%print_all_intervals%stat
+       Call set_read_status(word, io, traj_data%msd%print_all_intervals%fread, traj_data%msd%print_all_intervals%fail)
+
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
@@ -1529,6 +1551,63 @@ Contains
     
   End Subroutine read_msd
 
+  Subroutine read_orientational_chemistry(iunit, traj_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to read the information from the &orientational_chemistry block
+    !
+    ! author    - i.scivetti February 2024
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi),  Intent(In   ) :: iunit
+    Type(traj_type), Intent(InOut)  :: traj_data 
+
+    Integer(Kind=wi)   :: io, length
+    Character(Len=256) :: message, word
+    Character(Len=256) :: set_error
+    
+    set_error = '***ERROR in the &orientational_chemistry block (SETTINGS file).'
+
+    Do
+      Read (iunit, Fmt=*, iostat=io) word
+      If (io /= 0) Then
+        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
+                                  & "&end_orientational_chemistry" to close the block.&
+                                  & Check if directives are set correctly.'         
+        Call error_stop(message) 
+      End If  
+      
+      Call get_word_length(word,length)
+      Call capital_to_lower_case(word)
+      If (Trim(word)=='&end_orientational_chemistry') Exit
+      Call check_for_rubbish(iunit, '&orientational_chemistry')
+
+      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
+      ! Do nothing if line is a comment of we have an empty line
+      Read (iunit, Fmt=*, iostat=io) word
+
+      Else If (Trim(word)=='variable') Then
+        Read (iunit, Fmt=*, iostat=io) word, traj_data%chem_ocf%variable%type
+        Call set_read_status(word, io, traj_data%chem_ocf%variable%fread,&
+                                     & traj_data%chem_ocf%variable%fail,&
+                                     & traj_data%chem_ocf%variable%type)
+
+      Else If (word(1:length) == 'print_all_intervals') Then
+       Read (iunit, Fmt=*, iostat=io) word, traj_data%chem_ocf%print_all_intervals%stat
+       Call set_read_status(word, io, traj_data%chem_ocf%print_all_intervals%fread,&
+                         & traj_data%chem_ocf%print_all_intervals%fail)
+                            
+                                      
+      Else
+        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
+                                & '" is not recognised as a valid settings. See the "use_code.md" file.&
+                                & Have you properly closed the block with "&end_orientational_chemistry"?'
+        Call error_stop(message)
+      End If
+
+    End Do
+    
+  End Subroutine read_orientational_chemistry
+  
+  
   Subroutine read_lifetime(iunit, traj_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to read the information from the &lifetime block
@@ -1575,6 +1654,11 @@ Contains
          Call set_read_status(word, io, traj_data%lifetime%rattling_wait%fread,&
                                       & traj_data%lifetime%rattling_wait%fail)
 
+      Else If (word(1:length) == 'print_all_intervals') Then
+       Read (iunit, Fmt=*, iostat=io) word, traj_data%lifetime%print_all_intervals%stat
+       Call set_read_status(word, io, traj_data%lifetime%print_all_intervals%fread, traj_data%lifetime%print_all_intervals%fail)
+                            
+                                      
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&
@@ -1630,6 +1714,10 @@ Contains
          Call set_read_status(word, io, traj_data%ocf%legendre_order%fread,&
                             & traj_data%ocf%legendre_order%fail)
 
+      Else If (word(1:length) == 'print_all_intervals') Then
+       Read (iunit, Fmt=*, iostat=io) word, traj_data%ocf%print_all_intervals%stat
+       Call set_read_status(word, io, traj_data%ocf%print_all_intervals%fread, traj_data%ocf%print_all_intervals%fail)
+                            
       Else
         Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
                                 & '" is not recognised as a valid settings.',&

@@ -7,10 +7,14 @@
 ! * Transfer Correlation Functions (only for reactive systems)
 ! * Mean Square Dislpacements
 ! * Orientational Correlation Functions
+! * Special Pair Orientational and Transfer Correlation Functions
+!
+! Please refer to file "use_code.md" for a detailed explanation of the capabilities
+! Example cases can be found in the examples folder
 !
 ! This code is available under the BSD 3-Clause License.
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)  
 !               
@@ -36,7 +40,7 @@ Program alc_trajectory
                            check_settings
 
   Use trajectory,    Only: traj_type, &
-                           research_trajectory,&
+                           extract_trajectory,&
                            trajectory_analysis
 
   Use unit_output,   Only: info
@@ -69,7 +73,7 @@ Implicit None
   ! Check the specification of settings in SET
   Call check_settings(files, model_data, traj_data)
   ! Read and define trajectory
-  Call research_trajectory(files, model_data, traj_data)
+  Call extract_trajectory(files, model_data, traj_data)
   ! To be implemented: Perform the requested analysis
   Call trajectory_analysis(files, model_data, traj_data)
 

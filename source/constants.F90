@@ -1,7 +1,7 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Module containing constants and parameters for computation
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
@@ -16,8 +16,8 @@ Module constants
 
   ! Code reference 
   Character(Len=16), Parameter, Public  :: code_name    = "ALC_TRAJECTORY" 
-  Character(Len=16), Parameter, Public  :: code_VERSION = "1.2"
-  Character(Len=16), Parameter, Public  :: date_RELEASE = "Dec 2023"
+  Character(Len=16), Parameter, Public  :: code_VERSION = "1.3"
+  Character(Len=16), Parameter, Public  :: date_RELEASE = "May 2024"
 
   ! FIXED PARAMETERS
   Real(Kind=wp), Parameter, Public  :: pi    = 3.14159265358979312e0_wp 
@@ -28,6 +28,7 @@ Module constants
   Real(Kind=wp), Parameter, Public  :: avogadro  = 6.02214076E+23
   Real(Kind=wp), Parameter, Public  :: K_to_eV   = 8.61732814974056E-05_wp
   Real(Kind=wp), Parameter, Public  :: Ha_to_eV  =27.211386245988_wp
+  Real(Kind=wp), Parameter, Public  :: initial_tolerance = 0.001_wp
   
   ! UNITS CONVERSION
   Real(Kind=wp), Parameter, Public  :: g_to_ng  = 1.0E+9 
