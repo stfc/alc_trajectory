@@ -1,17 +1,15 @@
 ## About the code
-**ALC_TRAJECTORY** is an open-source software that allows computing: 
+**ALC_TRAJECTORY** offers an open-source tool to extract orientational anisotropies and transfer correlations from Molecular Dynamics (MD) simulations of reactive systems. By "reactive" we refer to systems in gas and condensed phase where the constituent atomic species change their chemistry composition along the trajectory, forming and breaking bonds, as it occurs in anion [[1]](https://pubs.acs.org/doi/10.1021/acs.jpcc.8b10298) and proton exchange membranes [[2]](https://pubs.acs.org/doi/10.1021/acs.jpclett.1c04071?ref=PDF), for example. The implemented capabilities allow computing: 
 
+* the location of the changing chemical species along the trajectory,
+* residence times, 
+* Transfer Correlation Functions (TCFs),
+* Special Pair Correlation Functions (SPCFs),
 * Orientational Correlation Functions (OCFs),
 * Radial Distribution Functions (RDFs), and 
-* Mean Square Displacements (MSDs) 
+* Mean Square Displacements (MSDs)  
 
-from Molecular Dynamics (MD) trajectories, both for reactive and non-reactive atomic systems ***all at once***. By "reactive" we refer to systems in gas and condensed phase where the constituent atomic species change their chemistry composition along the trajectory, forming and breaking bonds, as it occurs in anion  [[1]](https://pubs.acs.org/doi/10.1021/acs.jpcc.8b10298) and proton exchange membranes [[2]](https://pubs.acs.org/doi/10.1021/acs.jpclett.1c04071?ref=PDF), for example. For reactive systems **ALC_TRAJECTORY** also allow computing:
-
-* the location of the changing chemical species,
-* residence times, and
-* Transfer Correlation Functions (TCFs). 
-
-As for the OCF, RDF and MSD, these last capabilities can be computed  ***all at once***, thus offering a novel tool to analyse reactive systems where the changing chemical species play a decisive rol in the computation of these quantities. Moreover, the simple and flexible input structure is convenient to indentify chemical species in different type of systems and environments. Although the applicability of ***ALC_TRAJECTORY*** is general, its development and optimization have been focused to analyse systems within the size range of Density Functional Theory (DFT) simulations.  
+***all at once***, thus offering a novel platform to analyse reactive systems where the changing chemical species play a decisive role. During the development of the code, our efforts were focused on designing a simple and flexible input structure to facilitate the definition and tracking of changing chemical species for different systems and chemical environments. Although the applicability of ***ALC_TRAJECTORY*** is general, its development and optimization have been focused to analyse systems within the size range of Density Functional Theory (DFT) simulations. It is also important to remark that **ALC_TRAJECTORY** also allows the computation of OCFs, RDFs and MSDs of non-reactive systems.  
 
 The development of this code started in February 2023 at the Ada Lovelace Centre (ALC) of the Science and Technology Facilities Council (STFC). **ALC_TRAJECTORY** is a serial code written in modern Fortran according to the 2008 standards. Its structure for development (and maintenance) follows the Continuous Integration (CI) practice and it is integrated within the GitLab DevOps of the STFC.
 In the root folder, the user will find several Markdown files, which are intended to provide help with the compilation and execution as well as guidance with the multiple available functionalities.  
@@ -42,7 +40,7 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 * README.md: this file.
 * [cmake_building.md](./cmake_building.md): steps to build, compile and run tests using the CMake platform.
 * [coding_protocol.md](./coding_protocol.md): details the instructions of the adopted protocol for code development with Fortran.
-* [use_code.md](./use_code.md): provides instructions for use together with a detailed description of the implemented capabilties. 
+* [use_code.md](./use_code.md): provides instructions for use together with a detailed description of the implemented capabilities. 
 
 ## Dependencies
 The user must have access to the following software (locally):
@@ -69,3 +67,13 @@ Details can be found in file [cmake_building.md](./cmake_building.md)
 ### Making use of the software
 Once the code has been installed and tested, the user should create a folder where to run the code from. In such folder, the MD trajectory must be copied to the TRAJECTORY file. The user also needs to provide the SETTINGS file with instructions for the type of analysis to execute. Instructions of the implemented capabilities can be found in the [use_code.md](./use_code.md) file. The SETTINGS files in folder [***examples***](./examples) offer explanatory templates, which are intended to help new users in the setting of input directives for execution. In each of the directories, the user will also find the corresponding TRAJECTORY files.
 
+## Contributing 
+Contributions from STFC staff are welcome as long as they comply with the coding protocols, as described in the [coding_protocol.md](./coding_protocol.md) file. Instructions for CI practices are provided in the [CI_instructions.md](./CI_instructions.md) file. New implementation must compulsory include test(s) for CI purposes. 
+
+Contributors should first create a fork using the [**Gitlab STFC**](https://gitlab.stfc.ac.uk/) web user-interface from the main [**ALC_TRAJECTORY**](https://gitlab.stfc.ac.uk/alc_trajectory/alc_trajectory) repository. For instructions of how to create a fork, please refer to the following [**link**](https://docs.gitlab.com/ee/user/project/repository/forking_workflow.html#creating-a-fork). Access to the generated fork will be available from the *Project* tab of [**Gitlab STFC**](https://gitlab.stfc.ac.uk/), which will be located at the address <span style="color:blue">https://gitlab.stfc.ac.uk/user_id/alc_trajectory</span>. In this address, *user_id* will be the user identification in [**Gitlab STFC**](https://gitlab.stfc.ac.uk/). Once the fork is created, the user can clone the *main* branch in the account *"username"* of the local machine *"wherever"* by executing the following command
+```sh
+username@wherever:/home/username/codes$ git clone -b main git@gitlab.stfc.ac.uk:user_id/alc_trajectory.git alc_trajectory
+```
+where ***alc_trajectory*** is set as the root directory. This folder will have been created following the execution of the command above. Any other name can be chosen.  
+
+Contributors should also request to become part of the ALC_TRAJECTORY project by contacting the individual in charge (owner) of the repository. 

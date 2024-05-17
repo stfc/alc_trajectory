@@ -1,11 +1,11 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Module that reads and evaluates each atomic configuration of the trajectory
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! Author       - i.scivetti  Feb  2023
+! Author    - i.scivetti  Feb  2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module atomic_model 
 
@@ -18,8 +18,7 @@ Module atomic_model
                                  
   Use fileset,            Only : file_type,              &
                                  FILE_TRAJECTORY,        &
-                                 FILE_SET,          &
-                                 refresh_out
+                                 FILE_SET
   Use input_types,        Only : in_integer, &
                                  in_integer_array, & 
                                  in_logic,   &
@@ -121,6 +120,19 @@ Module atomic_model
     Type(environment)  :: acceptor 
     Type(bonding)      :: bonds
   End Type 
+
+  ! Type for geometrical paremeter
+  Type, Public :: short_dist_type
+    Type(in_string)    :: invoke
+    Type(in_string)    :: tag_reference_species
+    Type(in_string)    :: tag_nn_species
+    Character(Len=8)   :: reference_species
+    Integer(Kind=wi)   :: num_nn_species
+    Character(Len=8)   :: nn_species(max_at_species)
+    Type(in_param)     :: lower_bound
+    Type(in_param)     :: upper_bound
+    Type(in_param)     :: dr 
+  End Type
   
   ! Type for geometrical paremeter
   Type, Public :: geo_param_type
@@ -134,16 +146,17 @@ Module atomic_model
     Type(in_param)       :: upper_bound
     Type(in_param)       :: delta 
   End Type
-  
+
   ! Type for computation of the internal geometry
   Type, Public :: geo_spec_type
     Type(in_string)       :: invoke
     Character(Len=256)    :: tag
     Type(geo_param_type)  :: dist
     Type(geo_param_type)  :: angle
+    Type(in_logic)        :: only_ref_tags_as_nn
   End Type 
   
-  ! Type to describe the definition of the monitoered species
+  ! Type to describe the definition of the monitored species
   Type :: spec_def_type
     Type(in_string)       :: name
     Integer(Kind=wi)      :: num_components
@@ -247,7 +260,7 @@ Module atomic_model
     ! Tracked species
     Type(tracking_type), Public           :: track_chem(max_components)
     ! Shortest pair
-    Type(geo_param_type), Public          :: nndist
+    Type(short_dist_type), Public         :: nndist
 
    Contains
      Private
@@ -262,6 +275,7 @@ Module atomic_model
   Public :: atomistic_model, check_definition_bonds, about_cell
   Public :: obtain_maximum_number_species, identify_monitored_indexes
   Public :: check_PBC, check_cell_consistency, check_orthorhombic_cell, check_length_directive 
+  Public :: compute_distance_pbc
   
 Contains
 
@@ -629,8 +643,7 @@ Contains
     ! For relevent indexes, find the initial index list
     model_data%config%Nmax_species=0
     Do j = 1, model_data%config%num_atoms
-      If(Trim(model_data%config%atom(j)%tag_0)==&
-       & Trim(model_data%species_definition%reference_tag%type)) Then
+      If(Trim(model_data%config%atom(j)%tag_0)==Trim(model_data%species_definition%reference_tag%type)) Then
        model_data%config%Nmax_species=model_data%config%Nmax_species+1 
       End If
     End Do 
@@ -693,7 +706,7 @@ Contains
     Do i=1, model_data%chem%N0%value-1
       Do j=i+1, model_data%chem%N0%value
          If (model_data%track_chem(i)%indx == model_data%track_chem(j)%indx) Then
-           Write (messages(1), '(1x,a)') '*** ERROR: problems to order chemical species for printing the tracking!'
+           Write (messages(1), '(1x,a)') '*** ERROR: problems to identify chemical species!'
            Write (messages(2), '(1x,a)') '    Please reduce the value of the cutoff directive in &bonding_criteria'
            Call info(messages, 2) 
            Call error_stop(' ')
@@ -840,7 +853,7 @@ Contains
 
   Subroutine search_chemistry_changes(model_data, frame)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Identify chenges of chemistry
+    ! Identify changes of chemistry
     ! 
     ! author    - i.scivetti Jan 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1302,7 +1315,7 @@ Contains
            Trim(model_data%config%atom(i)%tag)==Trim(model_data%extra_bonds%tg2(k))) 
 
         If(f1 .Or. f2) Then
-           Call compute_distance_PBC(model_data%config%atom(i)%r(:), model_data%config%atom(j)%r(:),&
+          Call compute_distance_PBC(model_data%config%atom(i)%r(:), model_data%config%atom(j)%r(:),&
                                    & model_data%config%cell, model_data%config%invcell, dist)
           If (dist < model_data%extra_bonds%bond(k)%value) Then
              match=.True.
@@ -1313,13 +1326,13 @@ Contains
 
         If (match) Then
           If((Trim(model_data%config%atom(i)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
-            (.Not. model_data%config%atom(i)%identified)) Then
+             (.Not. model_data%config%atom(i)%identified)) Then
              model_data%chem%indx_new(l) = j
              model_data%config%atom(i)%identified=.True.
              model_data%config%atom(j)%bonds(1)=i
              model_data%config%atom(j)%Nbonds=1
           Else If((Trim(model_data%config%atom(j)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
-            (.Not. model_data%config%atom(j)%identified)) Then
+             (.Not. model_data%config%atom(j)%identified)) Then
              model_data%chem%indx_new(l) = i
              model_data%config%atom(j)%identified=.True.
              model_data%config%atom(i)%bonds(1)=j
@@ -2240,9 +2253,9 @@ Contains
       Call check_definition_monitored_species(files, model_data)
     End If
 
-    ! Check &shortest_pair
+    ! Check &selected_nn_distances
     If (model_data%nndist%invoke%fread) Then
-      Call check_shortest_pair(files, model_data%nndist, model_data)
+      Call check_selected_nn_distances(files, model_data%nndist, model_data)
     End If
     
   End Subroutine check_model_settings
@@ -2821,7 +2834,7 @@ Contains
       If (model_data%species_definition%intra_geom%dist%invoke%fread) Then
         Call check_settings_geom_param(messages(1), model_data%species_definition%intra_geom%invoke%type,&
                                     & model_data%species_definition%intra_geom%dist)
-        Call check_intramol_stat_species(messages(1),model_data%species_definition,model_data%species_definition%intra_geom%dist)                              
+        Call check_intramol_stat_species(messages(1),model_data%species_definition,model_data%species_definition%intra_geom%dist)
       End If
       If (model_data%species_definition%intra_geom%angle%invoke%fread) Then
         Call check_settings_geom_param(messages(1), model_data%species_definition%intra_geom%invoke%type,&
@@ -2840,6 +2853,18 @@ Contains
 
     ! Check intermol_stat_settings 
     If (model_data%species_definition%inter_geom%invoke%fread) Then
+      ! Check if only reference tags will be condired as NNs
+      If (model_data%species_definition%inter_geom%only_ref_tags_as_nn%fread) Then
+        If (model_data%species_definition%inter_geom%only_ref_tags_as_nn%fail) Then
+          Write (messages(1),'(2(1x,a))') Trim(error_set), 'Missing (or wrong) specification for directive&
+                                    & "only_ref_tags_as_nn" (choose either .True. or .False.)'
+          Call info(messages,1)
+          Call error_stop(' ')
+        End If
+      Else
+        model_data%species_definition%inter_geom%only_ref_tags_as_nn%stat=.False.
+      End If
+    
       If (model_data%species_definition%inter_geom%dist%invoke%fread) Then
         Call check_settings_geom_param(messages(1), model_data%species_definition%inter_geom%invoke%type,&
                                     & model_data%species_definition%inter_geom%dist)
@@ -2955,6 +2980,14 @@ Contains
          Call info(messages, 3)
          Call error_stop(' ') 
       End If
+      If (M%tag_species%fread) Then
+         Write (messages(2),'(1x,a)') 'Check "'//Trim(inblock)//'" block: the definition of the "'//Trim(M%tag_species%type)//&
+                                     &'" directive within "'//Trim(M%invoke%type)//'" is not required.' 
+         Write (messages(3),'(1x,a)') 'Please remove "'//Trim(M%tag_species%type)//'" from this block.' 
+
+         Call info(messages, 3)
+         Call error_stop(' ') 
+      End If
     End If 
  
     ! Error message just in case....
@@ -2996,65 +3029,106 @@ Contains
     End If  
      
   End Subroutine check_settings_geom_param
-  
-  Subroutine check_shortest_pair(files, M, model_data)
+    
+  Subroutine check_selected_nn_distances(files, M, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check the definition of the
-    ! parameters defined in the &shortest_pair block
+    ! parameters defined in the &selected_nn_distances block
     !
     ! author    - i.scivetti Nov 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Type(file_type),      Intent(InOut) :: files(:)
-    Type(geo_param_type), Intent(InOut) :: M 
-    Type(model_type),     Intent(In   ) :: model_data
+    Type(file_type),       Intent(InOut) :: files(:)
+    Type(short_dist_type), Intent(InOut) :: M 
+    Type(model_type),      Intent(In   ) :: model_data
 
     Character(Len=256)  :: messages(3), error_set
-    Character(Len=8)    :: tag
+    Character(Len=8)    :: tagj, tagk
     Logical             :: flag
-    Integer(Kind=wi)    :: j, k            
+    Integer(Kind=wi)    :: j, k
     
     ! Error message just in case....
     error_set = '***ERROR in file '//Trim(files(FILE_SET)%filename)//' -'
-    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&shortest_pair" block.'
+    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&selected_nn_distances" block.'
 
-    If(M%tag_species%fread) Then
-      If (M%tag_species%fail) Then
-        Write (messages(2),'(1x,a)')  'Problems to define the "tag_species" directive'  
+    If(M%tag_nn_species%fread) Then
+      If (M%tag_nn_species%fail) Then
+        Write (messages(2),'(1x,a)')  'Problems to define the "nn_species" directive'  
         call info(messages, 2)
         call error_stop(' ')
-      Else
-        If (Trim(M%species(1)) == Trim(M%species(2))) Then
-          Write (messages(2),'(1x,a)')  'The two tags defined in "tag_species" must be different.'  
-          call info(messages, 2)
-         call error_stop(' ')
-        End If
       End If
     Else
-      Write (messages(2),'(1x,a)')  'The user must define the "tag_species" directive'  
+      Write (messages(2),'(1x,a)')  'The user must define the "nn_species" directive'  
       call info(messages, 2)
       call error_stop(' ')
     End If
+
+    If(M%tag_reference_species%fread) Then
+      If (M%tag_reference_species%fail) Then
+        Write (messages(2),'(1x,a)')  'Problems to define the "reference_species" directive'  
+        call info(messages, 2)
+        call error_stop(' ')
+      End If
+    Else
+      Write (messages(2),'(1x,a)')  'The user must define the "reference_species" directive'  
+      call info(messages, 2)
+      call error_stop(' ')
+    End If
+
+    !Check if the reference_species is defined in the &input_composition block  
+    tagk=Trim(M%reference_species)
+    Call remove_symbols(tagk,'*')
+    flag=.True.
+    j=1
+    Do While (j <= model_data%input_composition%atomic_species .And. flag)
+      If (Trim(model_data%input_composition%tag(j))==Trim(tagk)) Then
+        flag=.False.
+      End If  
+      j=j+1
+    End Do
+    If (flag) Then
+      Write (messages(2),'(1x,a)')   'The tag "'//Trim(M%reference_species)//&
+                                     &'" defined in the "reference_species" directive is not a valid option.&
+                                     & Please check the definition of the &input_composition block' 
+      Call info(messages, 2)
+      Call error_stop(' ') 
+    End If 
     
-    !Check if tags are defined in the &input_composition block  
-    Do k=1, M%nspecies
-      tag=Trim(M%species(k))
-      Call remove_symbols(tag,'*')
+    !Check if tags in nn_species are defined in the &input_composition block  
+    Do k=1, M%num_nn_species
+      tagk=Trim(M%nn_species(k))
+      Call remove_symbols(tagk,'*')
       flag=.True.
       j=1
       Do While (j <= model_data%input_composition%atomic_species .And. flag)
-        If (Trim(model_data%input_composition%tag(j))==Trim(tag)) Then
+        If (Trim(model_data%input_composition%tag(j))==Trim(tagk)) Then
           flag=.False.
         End If  
         j=j+1
       End Do
       If (flag) Then
-        Write (messages(1),'(2(1x,a))') Trim(error_set), 'The tag "'//Trim(M%species(k))//'" defined in the "tag_species" directive&
-                                       & is not a valid option. Please review the definition of the &input_composition block' 
-        Call info(messages, 1)
+        Write (messages(2),'(1x,a)')   'The tag "'//Trim(M%nn_species(k))//&
+                                       &'" defined in the "nn_species" directive is not a valid option.&
+                                       & Please check the definition of the &input_composition block' 
+        Call info(messages, 2)
         Call error_stop(' ') 
       End If 
     End Do
-    
+
+    !Check if tags defined in nn_species are repeated
+    Do j=1, M%num_nn_species-1
+      tagj=Trim(M%nn_species(j))
+      Do k=j+1, M%num_nn_species 
+        tagk=Trim(M%nn_species(k))
+        If (Trim(tagj)==Trim(tagk)) Then
+          Write (messages(2),'(1x,a)')   'The tag "'//Trim(tagj)//&
+                                         &'" is repeated in the specification of the "nn_species" directive.&
+                                         & Please remove this duplication.' 
+          Call info(messages, 2)
+          Call error_stop(' ') 
+        End If 
+      End Do
+    End Do
+
     !Check lower_bound, upper_bound and delta
     If (.Not. M%lower_bound%fread) Then
       M%lower_bound%tag='lower_bound'
@@ -3062,13 +3136,13 @@ Contains
     If (.Not. M%upper_bound%fread) Then
       M%upper_bound%tag='upper_bound'
     End If
-    If (.Not. M%delta%fread) Then
-      M%delta%tag='delta'
+    If (.Not. M%dr%fread) Then
+      M%dr%tag='delta'
     End If
     
     Call check_length_directive(M%lower_bound, messages(1), .True., 'directive')
     Call check_length_directive(M%upper_bound, messages(1), .True., 'directive')
-    Call check_length_directive(M%delta,       messages(1), .True., 'directive')
+    Call check_length_directive(M%dr,          messages(1), .True., 'directive')
     If (M%lower_bound%value >= M%upper_bound%value) Then
       Write (messages(2),'(1x,a)')  'The value of "upper_bound" must be larger than "lower_bound"&
                                   & (make sure this is the case if you use different units)' 
@@ -3076,7 +3150,7 @@ Contains
       Call error_stop(' ') 
     End If
      
-  End Subroutine check_shortest_pair
+  End Subroutine check_selected_nn_distances
   
   
   Subroutine check_angle_directive(T, error_set, kill, type_directive)
@@ -3207,7 +3281,7 @@ Contains
     Type(file_type),     Intent(InOut) :: files(:)
     Type(model_type),    Intent(InOut) :: model_data
 
-    Character(Len=256) :: messages(4), word
+    Character(Len=256) :: messages(4), word, N0chem, nbonds, ncutoff
     Integer(Kind=wi)   :: j
 
     Call info(' ', 1) 
@@ -3215,65 +3289,72 @@ Contains
     Call info('==============', 1) 
     Write (word,*) model_data%input_composition%numtot
     Write (messages(1),'(1x,a)') '- the atomic model contains '//Trim(Adjustl(word))//' atoms.&    
-                                 & The initial tag and element for each atom is defined in the&
-                                 & "&input_composition" block'
+                                 & The initial tag and element for each atomic species is defined&
+                                 & in the "&input_composition" block.'
 
                               
     If ((Trim(model_data%input_geometry_format%type) == 'xyz')) Then
-      Write (messages(2),'(1x,a)') '- the size of the model is defined by the lattice vectors in the &
-                                     &"&simulation_cell" block'
+      Write (messages(2),'(1x,a)') '- the size of the model is defined by the lattice vectors&
+                                     & as specified in the "&simulation_cell" block.'
     Else
       Write (messages(2),'(1x,a)') '- the size of the model is specified in the '//&
-                                    &Trim(files(FILE_TRAJECTORY)%filename)//' file'
+                                    &Trim(files(FILE_TRAJECTORY)%filename)//' file.'
       
     End If
     Call info(messages, 2)
 
+    If (model_data%config%monitored_species%fread) Then
+      Write (messages(1),'(1x,a)') '- the "&monitored_species" block specifies the composition of the&
+                                 & non-reactive part of the model that will be analysed.'
+      Call info(messages, 1)
+    End If
+
     If (model_data%change_chemistry%stat) Then
-      Write (messages(1),'(1x,a,i3,a)') 'The procedure is set to identify (and track) ', model_data%chem%N0%value,& 
-                                & ' changing chemical species along the trajectory. The composition and bonding of such species is&
-                                & defined as follows:'
-      
-      Write (messages(2),'(1x,a)') '- species will contain bonds to '//Trim(model_data%chem%bonds%species%type)//' atoms' 
-      Write (messages(3),'(1x,a,(*(3x,a)))') '- a bond with a '//Trim(model_data%chem%bonds%species%type)//' atom&
+      Write (N0chem,*) model_data%chem%N0%value
+      Write (messages(1),'(1x,a)') 'The procedure is set to identify (and track) '//Trim(Adjustl(N0chem))//' changing chemical& 
+                            & species along the trajectory. The composition and bonding of such species is defined as follows:'
+      Write (messages(2),'(1x,a)') '- species will contain bonds to "'//Trim(model_data%chem%bonds%species%type)//'" atoms' 
+      Write (messages(3),'(1x,a,(*(3x,a)))') '- a bond with a "'//Trim(model_data%chem%bonds%species%type)//'" atom&
                                         & is only possible with following atomic tag(s): ', &
                                         & (Trim(model_data%chem%acceptor%tg_incl(j)), j = 1, model_data%chem%acceptor%N0_incl)
-                                      
-      Write (messages(4),'(1x,a,i2,a,f6.2,a)') '- the number of bonds for each species is ', model_data%chem%bonds%N0%value,&
-                                        & '. A bond is created when the interactomic distance (cutoff) is lower than ',&
-                                        & model_data%chem%bonds%cutoff%value, ' Angstroms'
+      Write (nbonds,*) model_data%chem%bonds%N0%value
+      Write (ncutoff,'(f10.2)') model_data%chem%bonds%cutoff%value
+      Write (messages(4),'(1x,a)') '- the number of bonds for each species is '//Trim(Adjustl(nbonds))//&
+                                  & '. A bond is created when the interactomic distance (cutoff) is lower than '&
+                                  &//Trim(Adjustl(ncutoff))//' Angstroms'
       Call info(messages, 4)
       
       If (model_data%extra_bonds%invoke%fread) Then
-        Write (messages(1),'(1x,a)') 'From the definitions of the "&possible_extra_bonds" (part of &bonding_criteria),&
-                                    & the existence of the following possible bonds will be also considered:'
-        Write (messages(2),'(1x,a)') '-----------------------------'                            
-        Write (messages(3),'(1x,a)') 'Tag1  Tag2  Cutoff (Angstrom)'
-        Write (messages(4),'(1x,a)') '-----------------------------'
+        Write (messages(1),'(1x,a)') 'From the definitions in "&possible_extra_bonds" (within the &bonding_criteria block),&
+                                    & the existence of the following possible bonds will also be considered:'
+        Write (messages(2),'(2x,a)') '-----------------------------'                            
+        Write (messages(3),'(2x,a)') 'Tag1  Tag2  Cutoff (Angstrom)'
+        Write (messages(4),'(2x,a)') '-----------------------------'
         Call info(messages, 4)                            
         Do j = 1, model_data%extra_bonds%N0
-           Write (messages(1),'(1x,(2(a,3x),f6.2))') Trim(model_data%extra_bonds%tg1(j)),&
+           Write (messages(1),'(2x,(2(a,3x),f6.2))') Trim(model_data%extra_bonds%tg1(j)),&
                                                    & Trim(model_data%extra_bonds%tg2(j)),&
                                                    & model_data%extra_bonds%bond(j)%value
           Call info(messages, 1)                                                                    
         End Do                    
-        Write (messages(1),'(1x,a)') '-----------------------------'
+        Write (messages(1),'(2x,a)') '-----------------------------'
         Call info(messages, 1)                            
       End If
-        
-      Write (messages(1),'(1x,a)') 'The identified species are set to change along the trajectory (change_chemistry .True.).'
-      Write (messages(2),'(1x,a)') 'The algorithm will explore bond breaking and formation with "'//&
-                                   &Trim(model_data%chem%bonds%species%type)//'" atoms within the environment set around those&
-                                   & species found in the previous configuration:'
-      Write (messages(3),'(1x,a,f6.2,a)') '- the enviroment around each species is defined within a radius (cutoff) of ',&
-                                    & model_data%chem%acceptor%cutoff%value, ' Angstroms'
-      Write (messages(4),'(1x,a,(*(3x,a)))') '- the search for new species within each enviroment will only inlcude the following&
-                                    &atomic tag(s): ',&
+
+      Write (messages(1),'(1x,a)') 'Atomic species of donors will be tagged with the "*" symbol'
+      Write (messages(2),'(1x,a)') 'The algorithm tracks bond breaking and formation with "'//&
+                                   &Trim(model_data%chem%bonds%species%type)//'" atoms by considering neighbouring acceptors&
+                                   & within the environment around each donor species:'
+      Write (ncutoff,'(f10.2)') model_data%chem%acceptor%cutoff%value                             
+      Write (messages(3),'(1x,a)') '- the environment around each donor is defined as the region within a cutoff radius of '&
+                                    &//Trim(Adjustl(ncutoff))//' Angstroms'
+      Write (messages(4),'(1x,a,(*(3x,a)))') '- the search for new donors is restricted to the following&
+                                    & atomic tag(s): ',&
                                     & (Trim(model_data%chem%acceptor%tg_incl(j)), j = 1, model_data%chem%acceptor%N0_incl)
       Call info(messages, 4)
       If (model_data%chem%acceptor%info_exclude%fread) Then
-        Write (messages(1),'(1x,a,(*(3x,a)))') '- the search will also exclude the following atomic pairs(s): ', &
-         &  (Trim(model_data%chem%acceptor%tg_excl(j))//'--'&
+        Write (messages(1),'(1x,a,(*(3x,a)))') '- the search will also exclude the following possible acceptor--donor pairs(s): ', &
+         &  (Trim(model_data%chem%acceptor%tg_excl(j))//'*--'&
          &//Trim(model_data%chem%acceptor%tg_excl(j)), j = 1, model_data%chem%acceptor%N0_excl)
         Call info(messages, 1)
       End If

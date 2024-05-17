@@ -136,12 +136,12 @@ Test project home/username/codes/alc_trajectory/test-gnu-debug
     Start 10: test10
 1/1 Test #10: test10 ...........................***Failed    0.62 sec
 *** Check for generated files against reference data ***
-SUCCESS !!! OUTPUT passed the test
+FAILURE !!! OUTPUT has NOT passed the test
 SUCCESS !!! TRACK_CHEMISTRY passed the test
 FAILURE !!! RDF has NOT passed the test
-SUCCESS !!! OCF passed the test
+SUCCESS !!! OCF_ALL passed the test
 SUCCESS !!! OCF_AVG passed the test
-SUCCESS !!! TCF passed the test
+SUCCESS !!! TCF_ALL passed the test
 SUCCESS !!! TCF_AVG passed the test
 SUCCESS !!! RES_TIMES passed the test
 *** Test FAILED ****************************

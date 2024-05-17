@@ -1,11 +1,11 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
 ! Module for input/output files and related subroutines
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright - 2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! Author -    i.scivetti  Feb 2023
+! Author      -  i.scivetti  Feb 2023
 !!!!!!!!!!!!!!!!!!!!11!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module fileset
 
@@ -45,16 +45,16 @@ Module fileset
   Integer(Kind=wi), Parameter, Public :: FILE_UNCHANGED_CHEM=6
   ! Radial Distribution Function RDF
   Integer(Kind=wi), Parameter, Public :: FILE_RDF=7
-  ! Rotational correlation function OCF
-  Integer(Kind=wi), Parameter, Public :: FILE_OCF=8
-  ! Rotational correlation function OCF (averaged)
+  ! Orientational correlation function OCF
+  Integer(Kind=wi), Parameter, Public :: FILE_OCF_ALL=8
+  ! Orientational correlation function OCF (averaged)
   Integer(Kind=wi), Parameter, Public :: FILE_OCF_AVG=9
   ! Mean Squared Displacement MSD
-  Integer(Kind=wi), Parameter, Public :: FILE_MSD=10 
+  Integer(Kind=wi), Parameter, Public :: FILE_MSD_ALL=10 
   ! Mean Squared Displacement MSD (averaged)
   Integer(Kind=wi), Parameter, Public :: FILE_MSD_AVG=11
   ! Residence Time Correlation Function
-  Integer(Kind=wi), Parameter, Public :: FILE_TCF=12 
+  Integer(Kind=wi), Parameter, Public :: FILE_TCF_ALL=12 
   ! Residence Time Correlation Function (average)
   Integer(Kind=wi), Parameter, Public :: FILE_TCF_AVG=13 
   ! Residence times
@@ -71,11 +71,19 @@ Module fileset
   Integer(Kind=wi), Parameter, Public :: FILE_INTERMOL_DISTANCES_NN2=19 
   ! Intermol angles
   Integer(Kind=wi), Parameter, Public :: FILE_INTERMOL_ANGLES=20 
+  ! Special Pair Correlation Function
+  Integer(Kind=wi), Parameter, Public :: FILE_SPCF_ALL=21 
+  ! Special Pair Correlation Function (averaged)
+  Integer(Kind=wi), Parameter, Public :: FILE_SPCF_AVG=22
+  ! Orientational correlation function for shortest bond TBOCF
+  Integer(Kind=wi), Parameter, Public :: FILE_CHEM_OCF_ALL=23
+  ! Orientational correlation function OCF (averaged)
+  Integer(Kind=wi), Parameter, Public :: FILE_CHEM_OCF_AVG=24
   ! Shortest distance for selected pair of species
-  Integer(Kind=wi), Parameter, Public :: FILE_SHORTEST_PAIR=21 
+  Integer(Kind=wi), Parameter, Public :: FILE_SELECTED_NN_DISTANCES=25
   
   ! Size of filename array
-  Integer(Kind=wi), Parameter, Public :: NUM_FILES = 21
+  Integer(Kind=wi), Parameter, Public :: NUM_FILES = 25
 
   Public :: set_system_files, print_header_out, wrapping_up, refresh_out
 
@@ -128,20 +136,25 @@ Contains
     set_names(FILE_TAGGED_TRAJ)     = "TAGGED_TRAJECTORY"
     set_names(FILE_UNCHANGED_CHEM)  = "UNCHANGED_CHEMISTRY"
     set_names(FILE_RDF)             = "RDF"
-    set_names(FILE_OCF)             = "OCF"
+    set_names(FILE_OCF_ALL)         = "OCF_ALL"
     set_names(FILE_OCF_AVG)         = "OCF_AVG"
-    set_names(FILE_MSD)             = "MSD"
+    set_names(FILE_MSD_ALL)         = "MSD_ALL"
     set_names(FILE_MSD_AVG)         = "MSD_AVG"
-    set_names(FILE_TCF)             = "TCF"
+    set_names(FILE_TCF_ALL)         = "TCF_ALL"
     set_names(FILE_TCF_AVG)         = "TCF_AVG"
     set_names(FILE_RES_TIMES)       = "RES_TIMES"
     set_names(FILE_COORD_DISTRIB)   = "COORD_DISTRIBUTION"
+    set_names(FILE_SPCF_ALL)        = "SPCF_ALL"
+    set_names(FILE_SPCF_AVG)        = "SPCF_AVG"
+    set_names(FILE_CHEM_OCF_ALL)    = "CHEM_OCF_ALL"
+    set_names(FILE_CHEM_OCF_AVG)    = "CHEM_OCF_AVG"
     set_names(FILE_INTRAMOL_DISTANCES) = "INTRAMOL_DISTANCES"
     set_names(FILE_INTRAMOL_ANGLES)    = "INTRAMOL_ANGLES"
     set_names(FILE_INTERMOL_ANGLES)    = "INTERMOL_ANGLES_NN"
     set_names(FILE_INTERMOL_DISTANCES_NN1) = "INTERMOL_DISTANCES_NN1"
     set_names(FILE_INTERMOL_DISTANCES_NN2) = "INTERMOL_DISTANCES_NN2"
-    set_names(FILE_SHORTEST_PAIR)   = "DISTANCE_SHORTEST_PAIR"
+    set_names(FILE_SELECTED_NN_DISTANCES)  = "SELECTED_NN_DISTANCES"
+    
     ! Set default filenames
     Do file_no = 1, NUM_FILES
       Call files(file_no)%init(set_names(file_no))
@@ -203,12 +216,12 @@ Contains
     Write (header(5), fmt3)  "#  version:  ", Trim(code_VERSION), Repeat(' ',57),                     "#"
     Write (header(6), fmt3)  "#  release:  ", Trim(date_RELEASE), Repeat(' ',52),                     "#"
     Write (header(7), fmt1)  "#                                                                        #"
-    Write (header(8), fmt1)  "#  Copyright:  2023  Ada Lovelace Centre (ALC)                           #"
+    Write (header(8), fmt1)  "#  Copyright:  2024  Ada Lovelace Centre (ALC)                           #"
     Write (header(9), fmt1)  "#              Scientific Computing Department (SCD)                     #"
     Write (header(10), fmt1) "#              Science and Technology Facilities Councils (STFC)         #"
     Write (header(11), fmt1) "#                                                                        #"
-    Write (header(12), fmt1) "#  Author:               Ivan Scivetti (SCD/STFC)                        #"
-    Write (header(13), fmt1) "#  Scientific support:   Gilberto Teobaldi (SCD/STFC)                    #"
+    Write (header(12), fmt1) "#  Author:            Ivan Scivetti (SCD/STFC)                           #"
+    Write (header(13), fmt1) "#  Project support:   Gilberto Teobaldi (SCD/STFC)                       #"
     Write (header(14), fmt1)  Repeat("#", 74)
     Call info(header, 14)
     

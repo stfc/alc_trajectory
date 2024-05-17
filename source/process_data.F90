@@ -1,11 +1,11 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Subroutines to perform various different operations with strings
 !
-! Copyright - 2023 Ada Lovelace Centre (ALC)
+! Copyright   2023-2024 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! author       - i.scivetti  Feb 2023
+! author      - i.scivetti  Feb 2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 Module process_data 
