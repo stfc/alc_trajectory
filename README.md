@@ -39,7 +39,6 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 * [LICENSE](./LICENSE): BSD 3-Clause License for ALC_TRAJECTORY. 
 * README.md: this file.
 * [cmake_building.md](./cmake_building.md): steps to build, compile and run tests using the CMake platform.
-* [coding_protocol.md](./coding_protocol.md): details the instructions of the adopted protocol for code development with Fortran.
 * [use_code.md](./use_code.md): provides instructions for use together with a detailed description of the implemented capabilities. 
 
 ## Dependencies
