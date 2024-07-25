@@ -36,7 +36,7 @@ pipeline {
                 sh '''
                 module load cmake
                 module load intel
-                folder='test-intel-debug'
+                folder='test-ifort-debug'
                 rm -rf $folder && mkdir $folder && pushd $folder
                 FC=ifort cmake ../  -DCMAKE_BUILD_TYPE=Debug  -DWITH_TESTING=ON
                 make
@@ -49,7 +49,7 @@ pipeline {
                 sh '''
                 module load cmake
                 module load intel
-                folder='test-intel'
+                folder='test-ifort'
                 rm -rf $folder && mkdir $folder && pushd $folder
                 FC=ifort cmake ../  -DCMAKE_BUILD_TYPE=Release  -DWITH_TESTING=ON
                 make
