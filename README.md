@@ -43,7 +43,7 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 ## Dependencies
 The user must have access to the following software (locally):
 
-* GNU-Fortran (7.2.0) or Intel-Fortran (16.0.1)
+* GNU-Fortran (7.2.0) or Intel-Fortran (ifort 16.0.1; ifx 2024.0.0)
 * Cmake (3.10.2)
 * Make (3.82)
 * git (2.25.1)
