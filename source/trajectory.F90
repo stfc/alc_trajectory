@@ -4323,12 +4323,13 @@ Contains
     End If
 
     ! Compare timestep with other time settings of &data_analysis
-    If (traj_data%timestep%value>=traj_data%analysis%time_interval%value) Then
-      Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%time_interval%tag)//&
-                               &'" must be larger that the timestep for the trajectory. Please check&
-                               & the value (and units) for the "timestep" directive.'
-      Call info(message, 1) 
-      Call error_stop(' ')
+    If (traj_data%analysis%time_interval%fread) Then
+     If (traj_data%timestep%value>=traj_data%analysis%time_interval%value) Then
+       Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%time_interval%tag)//&
+                              &'" must be larger that the timestep for the trajectory. Please check the "timestep" directive.'
+       Call info(message, 1) 
+       Call error_stop(' ')
+     End If
     End If
 
     If (traj_data%analysis%overlap_time%fread) Then
