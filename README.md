@@ -24,7 +24,7 @@ Ivan Scivetti (SCD, STFC)
 Gilberto Teobaldi (SCD, STFC)
 
 ## Structure of files and folders
-ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
+ALC_TRAJECTORY contains the following relevant set of files and folders (in italic-bold):
 
 * [***CI-tests***](./CI-tests): contains the tests files (in .tar format) needed for CI purposes. The user should execute the available scripts of the [***tools***](./tools) folder to run the test automatically and verify the code has been installed properly (see the [cmake_building.md](./cmake_building.md) file for instructions).
 * [***cmake***](./cmake): contains the specification for the compilation flags depending on the Fortran compiler and version, including options for debugging.
@@ -32,7 +32,6 @@ ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 * [***scripts***](./scripts): contains scripts for data processing.
 * [***source***](./source): contains the source code. Files have the *.F90* extension
 * [***tools***](./tools): shell files for building, compiling and testing the code automatically.
-* [.gitignore](./.gitignore): instructs Git which file to ignore for development and integration.
 * [CMakeList.txt](./CMakeList.txt): sets the framework for code building and testing with CMake. This file must ONLY be modified to add test cases.
 * Jenkinsfile: file with specifications to build and run the testing infrastructure.
 * [LICENSE](./LICENSE): BSD 3-Clause License for ALC_TRAJECTORY. 
@@ -53,9 +52,9 @@ Information in parenthesis indicates the minimum version tested during the devel
 ## Getting started
 
 ### Obtaining the code
-The user with account *"username"* can clone the code locally (in machine *"wherever"*) by executing the following command with the SSH protocol
+The user can clone the code locally by executing the following command with the SSH protocol
 ```sh
-username@wherever:/home/username/codes$ git clone git@github.com:stfc/alc_trajectory.git 
+$ git clone git@github.com:stfc/alc_trajectory.git 
 ```
 which generate the ***alc_trajectory*** folder as the root directory. Alternatively, the code can be downloaded from any of the available assets.
 
