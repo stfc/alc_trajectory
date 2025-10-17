@@ -16,8 +16,8 @@ Module constants
 
   ! Code reference 
   Character(Len=16), Parameter, Public  :: code_name    = "ALC_TRAJECTORY" 
-  Character(Len=16), Parameter, Public  :: code_VERSION = "1.4"
-  Character(Len=16), Parameter, Public  :: date_RELEASE = "Aug 2024"
+  Character(Len=16), Parameter, Public  :: code_VERSION = "1.5"
+  Character(Len=16), Parameter, Public  :: date_RELEASE = "Oct  2025"
 
   ! FIXED PARAMETERS
   Real(Kind=wp), Parameter, Public  :: pi    = 3.14159265358979312e0_wp 

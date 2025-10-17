@@ -168,7 +168,8 @@ print_retagged_trajectory  TRUE              # Print tagged trajectory (False by
 &data_analysis                                    
   time_interval   10.0  ps                        # Take time segments of 10 ps
   overlap_time    0.50  ps                        # Initialise a new analysis every 0.50 ps. This is convenient to average computed quantities, whose values will be printed to TCF_AVG, MSD_AVG and OCF_AVG
-  ignore_initial  2.00  ps                        # Ignore the first 2 ps of the trajectory  
+  ignore_initial  2.00  ps                        # Ignore the first 2 ps of the trajectory 
+  end_time       25.00  ps                        # Analyse the trajectory up to 25 ps   
 &end_data_analysis                                #
 ###################################################
 

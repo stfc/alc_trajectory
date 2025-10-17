@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1...3.15)
 
-project(ALC_TRAJECTORY VERSION 1.4 
+project(ALC_TRAJECTORY VERSION 1.5 
         LANGUAGES Fortran)
 set(AUTHOR "Ivan Scivetti")
 set(AUTHOR_DETAILS "ivan.scivetti@stfc.ac.uk")
@@ -46,7 +46,7 @@ if (NOT FLAGS_SET)
    endif()
 
    set(CMAKE_Fortran_FLAGS_DEBUG "-g -O0 -stand f08 -traceback -C -check all,nouninit -ftrapuv -init=snan -init=arrays" CACHE STRING "Flags used by the Intel-Fortran compiler for the DEBUG option." FORCE)
-   set(CMAKE_Fortran_FLAGS_RELEASE "-O3 -C -check nouninit" CACHE STRING "Flags used by the Intel-Fortran compiler for the RELEASE option." FORCE)
+   set(CMAKE_Fortran_FLAGS_RELEASE "-Ofast" CACHE STRING "Flags used by the Intel-Fortran compiler for the RELEASE option." FORCE)
 
   endif()
   set(FLAGS_SET 1 CACHE INTERNAL "Flags have been defined")
