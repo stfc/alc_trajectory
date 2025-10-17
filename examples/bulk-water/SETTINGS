@@ -127,6 +127,7 @@ timestep   10  fs             #  Time step of the recoderd trajectory, which is 
   time_interval   10.0  ps                        # Take time segments of 10 ps
   overlap_time    0.50  ps                        # Initialise a new analysis every 0.50 ps. This is convenient to average computed quantities, whose values will be printed to TCF_AVG, MSD_AVG and OCF_AVG
   ignore_initial  2.00  ps                        # Ignore the first 2 ps of the trajectory  
+  end_time        25.00  ps                       # Consider 25 ps of the total trajectory (use only in special cases)  
 &end_data_analysis                                #
 ###################################################
 

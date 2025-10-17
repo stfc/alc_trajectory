@@ -1331,6 +1331,13 @@ Contains
         Call set_read_status(word, io, traj_data%analysis%time_interval%fread,&
                                       & traj_data%analysis%time_interval%fail)
 
+      Else If (Trim(word)=='end_time') Then
+        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%end_time%tag, &
+                                      & traj_data%analysis%end_time%value,& 
+                                      & traj_data%analysis%end_time%units
+        Call set_read_status(word, io, traj_data%analysis%end_time%fread,&
+                                      & traj_data%analysis%end_time%fail)                                      
+                                      
       Else If (Trim(word)=='ignore_initial') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%analysis%ignore_initial%tag, &
                                       & traj_data%analysis%ignore_initial%value,& 

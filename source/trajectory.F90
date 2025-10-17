@@ -8,7 +8,7 @@
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! Author:     -  i.scivetti  Feb 2023
+! Author:     -  i.scivetti  Febđ 2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module trajectory 
   Use atomic_model, Only : model_type, &
@@ -105,11 +105,13 @@ Module trajectory
     Type(in_string)   :: invoke
     Type(in_logic)    :: normalise_at_t0
     Type(in_param)    :: time_interval
+    Type(in_param)    :: end_time
     Type(in_param)    :: ignore_initial
     Type(in_param)    :: overlap_time
     Integer(Kind=wi)  :: N_seg
     Integer(Kind=wi)  :: Ninterval
     Integer(Kind=wi)  :: frame_ini
+    Integer(Kind=wi)  :: frame_last
     Logical           :: normalised
     Integer(Kind=wi), Allocatable :: seg_indx(:,:)
     Real(Kind=wp),    Allocatable :: variable(:,:)
@@ -335,7 +337,7 @@ Contains
     If (Allocated(T%analysis%max_points)) Then
       Deallocate(T%analysis%max_points)
     End If 
-    
+   
   End Subroutine cleanup
     
   Subroutine extract_trajectory(files, model_data, traj_data)
@@ -352,11 +354,11 @@ Contains
     Type(traj_type),   Intent(InOut) :: traj_data
     
     Logical            :: safe, loop_traj, fortho
-    Character(Len=256) :: message, nframes, md_length
-    Character(Len=32 ) :: input_file, set_error
+    Character(Len=256) :: message, nframes, md_length, net_md_length
+    Character(Len=256) :: input_file, set_error
     Integer(Kind=wi)   :: i, j
     
-    input_file=Trim(files(FILE_TRAJECTORY)%filename)
+    input_file=(files(FILE_TRAJECTORY)%filename)
     set_error = '***ERROR -'
 
     Inquire(File=input_file, Exist=safe)
@@ -375,7 +377,7 @@ Contains
     model_data%config%allocated_model_geo=.False.
     
     ! Open the TRAJECTORY file
-    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=Trim(input_file),Status='old')
+    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=input_file,Status='old')
     Call read_model(files, model_data, 1, traj_data%ensemble%type)
     Close(files(FILE_TRAJECTORY)%unit_no) 
     ! Scale simulation cell 
@@ -421,7 +423,10 @@ Contains
     If (traj_data%region%define%fread) Then
       Call check_region_domain(model_data, traj_data, 1)
     End If 
-    
+
+    Call info(' ', 1) 
+    Call info('Trajectory settings', 1) 
+    Call info('===================', 1) 
     ! Search for the number of frames
     Call obtain_number_frames(files, model_data, traj_data)
     ! Allocate trajectory arrays
@@ -434,8 +439,8 @@ Contains
     Call refresh_out(files)
     
     ! Open the TRAJECTORY file
-    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=Trim(input_file),Status='old')
-    Write(md_length,'(f12.3)') traj_data%frames*traj_data%timestep%value/1000.0_wp
+    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=(input_file),Status='old')
+    Write(md_length,'(f12.3)') (traj_data%frames-1)*traj_data%timestep%value/1000.0_wp
     Write(nframes,'(i8)') traj_data%frames
     Call info(' ', 1)
     Call info('Start of the analysis', 1)
@@ -444,6 +449,17 @@ Contains
                                  & the setting of the "timestep" directive, the recorded MD trajectory is '&
                                  &//Trim(Adjustl(md_length))//' ps long.'
     Call info(message, 1)
+    
+    If (traj_data%analysis%end_time%fread) Then
+      If ((traj_data%analysis%end_time%value-(traj_data%frames-1)*traj_data%timestep%value)<0.0_wp) Then
+        Write(net_md_length,'(f8.3)') traj_data%analysis%end_time%value/1000.0_wp
+        Write (message,'(1x,a)') 'Nevertheless, from the set value of the "'//Trim(traj_data%analysis%end_time%tag)//&
+                                    &'" directive (&data_analysis block), the analysis will consider up to '&
+                                    &//Trim(Adjustl(net_md_length))//' ps of the MD trajectory.' 
+        Call info(message, 1)
+      End If
+    End If    
+         
     Call info(' Reading trajectory from the "'//Trim(input_file)//'" file...', 1)
     i=1
     loop_traj=.True.
@@ -485,7 +501,7 @@ Contains
     End If
     
     If(traj_data%print_retagged_trajectory%stat) Then 
-      input_file=Trim(files(FILE_TAGGED_TRAJ)%filename)
+      input_file=(files(FILE_TAGGED_TRAJ)%filename)
       Call print_tagged_trajectory(files, model_data, traj_data)
       Write (message,'(1x,a)') 'A copy of the trajectory with modified tags for the atomic species was printed&
                               & to the "'//Trim(input_file)//'" file'
@@ -511,9 +527,9 @@ Contains
       If(model_data%change_chemistry%stat) Then
         Open(Newunit=files(FILE_TAGGED_TRAJ)%unit_no, File=files(FILE_TAGGED_TRAJ)%filename, Status='Replace')
         iunit=files(FILE_TAGGED_TRAJ)%unit_no
+        Write(iunit,*) model_data%config%num_atoms, traj_data%frames, ' # number of total atoms and trajectory frames'
         Do l = 1, traj_data%frames
-          Write(iunit,*) model_data%config%num_atoms, traj_data%frames
-          Write(iunit,*) ' ' 
+          Write(iunit,*) 'Frame=', l 
           Do i = 1, model_data%config%num_atoms 
             Write(iunit,'(a, 4x, 3(f11.3), 4x, a)') Trim(traj_data%config(l,i)%element),&
                                                  & (traj_data%config(l,i)%r(k), k=1, 3),&
@@ -666,7 +682,7 @@ Contains
     Logical        :: modified, finclude
     
     net_frames=0
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
       accum=0
       Do  j= 1, traj_data%Nmax_species
         min_dist1 = Huge(1.0_wp)
@@ -789,20 +805,20 @@ Contains
       net_frames=0
 
       ! Compute the histogram for the selected coordinate of the selected species
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         h=0
         num_var=0
         num_at=0
         list_indx=0
         Do j = 1, model_data%config%num_atoms
-          If (Trim(model_data%nndist%reference_species)==Trim(traj_data%config(i,j)%tag)) Then
+          If (model_data%nndist%reference_species==traj_data%config(i,j)%tag) Then
               num_at(1)=num_at(1)+1
               list_indx(num_at(1),1)=j
           End If 
           k=1
           flag=.False.
           Do While (k <= model_data%nndist%num_nn_species .And. (.Not. flag))
-            If (Trim(model_data%nndist%nn_species(k))==Trim(traj_data%config(i,j)%tag)) Then
+            If (model_data%nndist%nn_species(k)==traj_data%config(i,j)%tag) Then
               num_at(2)=num_at(2)+1
               list_indx(num_at(2),2)=j
               flag=.True.  
@@ -953,7 +969,7 @@ Contains
       net_frames=0
       
       ! Compute the histogram for the selected coordinate of the selected species
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         h=0
         num_var=0
         Do  j= 1, traj_data%Nmax_species
@@ -1114,7 +1130,7 @@ Contains
       net_frames=0
       
       ! Compute the histogram for the selected coordinate of the selected species
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         h=0
         num_var=0
         Do  j= 1, traj_data%Nmax_species
@@ -1131,10 +1147,10 @@ Contains
                 ni(1)=traj_data%species(i,j)%list(k1)
                 Do k2= k1+1, atoms_per_species
                   ni(2)=traj_data%species(i,j)%list(k2)
-                  flag1=(Trim(traj_data%config(i,ni(1))%element)==Trim(M%species(1))) .And.&
-                        (Trim(traj_data%config(i,ni(2))%element)==Trim(M%species(2)))
-                  flag2=(Trim(traj_data%config(i,ni(1))%element)==Trim(M%species(2))) .And.&
-                        (Trim(traj_data%config(i,ni(2))%element)==Trim(M%species(1)))      
+                  flag1=(traj_data%config(i,ni(1))%element==M%species(1)) .And.&
+                        (traj_data%config(i,ni(2))%element==M%species(2))
+                  flag2=(traj_data%config(i,ni(1))%element==M%species(2)) .And.&
+                        (traj_data%config(i,ni(2))%element==M%species(1))      
                   If (flag1 .Or. flag2) Then
                     u=traj_data%config(i,ni(1))%r-traj_data%config(i,ni(2))%r          
                     Call check_PBC(u, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
@@ -1157,16 +1173,16 @@ Contains
                   Do k3= k2+1, atoms_per_species
                     ni(3)=traj_data%species(i,j)%list(k3)
                     Do l= 1, 3
-                      If (Trim(traj_data%config(i,ni(l))%element)==Trim(M%species(2))) Then
+                      If (traj_data%config(i,ni(l))%element==M%species(2)) Then
                         Do l1= 1, atoms_per_species
                           nj(1)=traj_data%species(i,j)%list(l1)
                           Do l2= l1+1, atoms_per_species
                             nj(2)=traj_data%species(i,j)%list(l2)
                             If (l1 /= l .And. l2 /= l) Then
-                              flag1=(Trim(traj_data%config(i,nj(1))%element)==Trim(M%species(1))) .And.&
-                                    (Trim(traj_data%config(i,nj(2))%element)==Trim(M%species(3)))
-                              flag2=(Trim(traj_data%config(i,nj(1))%element)==Trim(M%species(3))) .And.&
-                                    (Trim(traj_data%config(i,nj(2))%element)==Trim(M%species(1)))
+                              flag1=(traj_data%config(i,nj(1))%element==M%species(1)) .And.&
+                                    (traj_data%config(i,nj(2))%element==M%species(3))
+                              flag2=(traj_data%config(i,nj(1))%element==M%species(3)) .And.&
+                                    (traj_data%config(i,nj(2))%element==M%species(1))
                               If (flag1 .Or. flag2) Then
                                 u =traj_data%config(i,nj(1))%r-traj_data%config(i,ni(l))%r
                                 u2=traj_data%config(i,nj(2))%r-traj_data%config(i,ni(l))%r
@@ -1270,13 +1286,13 @@ Contains
     
     l=0
     counts=0
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
       l=l+1
       k=0
       Do j = 1, model_data%chem%N0%value
         Do m = 1, model_data%chem%acceptor%N0_incl
           word=Trim(model_data%chem%acceptor%tg_incl(m))//'*'
-          If (Trim(traj_data%track_chem%config(i,j)%tag)==Trim(word)) Then
+          If (traj_data%track_chem%config(i,j)%tag==word) Then
             counts(m)=counts(m)+1
             k=k+1 
           End If
@@ -1324,9 +1340,22 @@ Contains
     ! Print tracked species
     Open(Newunit=files(FILE_TRACK_CHEMISTRY)%unit_no, File=files(FILE_TRACK_CHEMISTRY)%filename, Status='Replace')
     iunit=files(FILE_TRACK_CHEMISTRY)%unit_no
-    Write(num_species,*) model_data%chem%N0%value 
-    Write (iunit,'(a,9x,2a)') '# Time (ps)', 'XYZ_Species_1 .... XYZ_Species_', Adjustl(Trim(num_species)) 
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    If (traj_data%analysis%frame_ini==1) Then
+      Write(iunit,'(a)') '# Tracking the change of chemical species over the whole trajectory'    
+    Else
+      Write(iunit,'(a,1x,f10.4,1x,a)') '# Tracking the change of chemical species ignoring the first',& 
+                                   &  traj_data%analysis%frame_ini*traj_data%timestep%value/1000_wp,&
+                                   & 'ps of the whole trajectory. This value is set to time zero below.'
+    End If
+
+    If (model_data%chem%N0%value==1) Then
+      Write (iunit,'(a,9x,a)') '# Time (ps)', 'XYZ_Species_1' 
+    Else
+      Write(num_species,*) model_data%chem%N0%value
+      Write (iunit,'(a,9x,2a)') '# Time (ps)', 'XYZ_Species_1 .... XYZ_Species_', Adjustl(Trim(num_species)) 
+    End If
+    
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
        Write(iunit,'(f10.4, 4x, *(f11.3))') (i-traj_data%analysis%frame_ini)*traj_data%timestep%value/1000_wp,&
                                        & (traj_data%track_chem%config(i,l)%r(:), l=1, model_data%chem%N0%value)
     End Do
@@ -1350,25 +1379,43 @@ Contains
     Type(traj_type),   Intent(InOut) :: traj_data
   
     Integer(Kind=wi)   :: iunit, i, k, l 
-    Character(Len=256) :: num_species, frame
-    Character(Len=256) :: message, messages(3), spec
+    Character(Len=256) :: frame
+    Character(Len=256) :: num_species, message, messages(3), spec, num1, num2
     Logical            :: flag
   
     flag=.True. 
   
     Open(Newunit=files(FILE_UNCHANGED_CHEM)%unit_no, File=files(FILE_UNCHANGED_CHEM)%filename, Status='Replace')
     iunit=files(FILE_UNCHANGED_CHEM)%unit_no
-    spec=Trim(traj_data%unchanged%tag%type)
+    
+    If (traj_data%analysis%frame_ini==1) Then
+      Write(iunit,'(a)') '# Tracking unchanged chemical species over the whole trajectory'    
+    Else  
+      Write(iunit,'(a,1x,f10.4,1x,a)') '# Tracking the unchanged chemical species ignoring the first',& 
+                                   &  traj_data%analysis%frame_ini*traj_data%timestep%value/1000_wp,&
+                                   & 'ps of the whole trajectory. This value is set to time zero below.' 
+    End If
+    
     If(traj_data%unchanged%N0==1) Then
-      Write (iunit,'(a,7x,a)') '#Time (ps)', 'XYZ_'//Trim(spec)//'_1'
+      Write(iunit,'(a)') '# The label and number for the species is consistent with the settings&
+                                   & of the "&track_unchanged_chemistry" block.'
+    Else                               
+      Write(iunit,'(a)') '# The species labelling, ordering and numbering is consistent with the settings&
+                                   & of the "&track_unchanged_chemistry" block.'    
+    End If
+    
+    spec=Trim(traj_data%unchanged%tag%type)
+    Write (num1,*) traj_data%unchanged%indexes(1)
+    If(traj_data%unchanged%N0==1) Then
+      Write (iunit,'(a,5x,a)') '#  Time (ps)', 'XYZ_'//Trim(spec)//'_'//Adjustl(Trim(num1))
     Else
-      Write(num_species,*) traj_data%unchanged%N0 
-      Write (iunit,'(a,7x,a)') '#Time (ps)', 'XYZ_'//Trim(spec)//'_1 .... XYZ_'//Trim(spec)//&
-                              &'_'// Adjustl(Trim(num_species))
+      Write (num2,*) traj_data%unchanged%indexes(traj_data%unchanged%N0)
+      Write (iunit,'(a,5x,a)') '#  Time (ps)', 'XYZ_'//Trim(spec)//'_'//Adjustl(Trim(num1))//&
+                              &'.... XYZ_'//Trim(spec)//'_'//Adjustl(Trim(num2))
     End If 
     
-    i=1
-    Do While (i <= traj_data%frames .And. flag)
+    i=traj_data%analysis%frame_ini
+    Do While (i <= traj_data%analysis%frame_last .And. flag)
       l =1
       Do While (l<= traj_data%unchanged%N0 .And. flag)
         k=traj_data%unchanged%indexes(l)
@@ -1378,7 +1425,7 @@ Contains
         l=l+1
       End Do
       If (flag) Then
-        Write(iunit,'(f10.4, 1x, *(f11.3))') (i-1)*traj_data%timestep%value/1000.0_wp,&
+        Write(iunit,'(f10.4, 1x, *(f11.3))') (i-traj_data%analysis%frame_ini)*traj_data%timestep%value/1000.0_wp,&
                 & (traj_data%config(i,traj_data%unchanged%indexes(l))%r(:), l=1, traj_data%unchanged%N0)
       Else
         Write (messages(1),'(1x,a)') '**********************************************'
@@ -1435,15 +1482,15 @@ Contains
     net_frames=0
     accum_a=0
     
-    Allocate(nat(traj_data%frames-traj_data%analysis%frame_ini+1))
+    Allocate(nat(traj_data%analysis%frame_last-traj_data%analysis%frame_ini+1))
     
     ! Compute the histogram for atoms of type a and b
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
       ! Define the number and list of indexes for type of species "a"
       num_at_a=0
       net_frames=net_frames+1 
       Do j = 1, model_data%config%num_atoms
-        If (Trim(model_data%species_definition%reference_tag%type)==Trim(traj_data%config(i,j)%tag)) Then
+        If (model_data%species_definition%reference_tag%type==traj_data%config(i,j)%tag) Then
           If (traj_data%region%define%fread) Then
              Call within_region(traj_data, i, j, flag)
           End If
@@ -1463,7 +1510,7 @@ Contains
     If (net_frames > 1) Then
       sum_i=0.0_wp
       j=0 
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         j=j+1 
         sum_i=sum_i+(Real(nat(j),Kind=wp)-average)**2
       End Do
@@ -1532,7 +1579,7 @@ Contains
       ctap='bottom'
     End If
     
-    Do i = traj_data%analysis%frame_ini+1, traj_data%frames
+    Do i = traj_data%analysis%frame_ini+1, traj_data%analysis%frame_last
       vector=0.0_wp
       Do j = 1, 3
         vector(:)=vector(:)+traj_data%box(i)%cell(j,:)
@@ -1569,12 +1616,12 @@ Contains
       net_frames=0
       
       ! Compute the histogram for the selected coordinate of the selected species
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         ! Define the number and list of indexes
         num_at=0
         list_indx=0
         Do j = 1, model_data%config%num_atoms
-          If (Trim(traj_data%coord_distrib%species)==Trim(traj_data%config(i,j)%tag)) Then
+          If (traj_data%coord_distrib%species==traj_data%config(i,j)%tag) Then
             num_at=num_at+1
             list_indx(num_at)=j
           End If
@@ -1651,8 +1698,8 @@ Contains
 
   Subroutine radial_distribution_function(files, traj_data, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to compute the Mean Squared Displacement (MSD) based on the
-    ! settings of the &MSD block
+    ! Subroutine to compute the Radial Distribution Function (RDF) based on the
+    ! settings of the &RDF block
     !
     ! author    - i.scivetti March 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1660,11 +1707,11 @@ Contains
     Type(traj_type),   Intent(InOut) :: traj_data
     Type(model_type),  Intent(In   ) :: model_data
 
-    Integer(Kind=wi)  :: i, j, k, m, iunit, indx_a, indx_b
+    Integer(Kind=wi)  :: i, j, k, m, iunit, indx_a, indx_b, itype
     Integer(Kind=wi)  :: num_at_a, num_at_b, nbins, net_frames
     Integer(Kind=wi)  :: accum_a, accum_b 
     
-    Real(Kind=wp)     :: rmax, r_bin, rho_b, dV, r
+    Real(Kind=wp)     :: rmax, r_bin, rho_b, dV
     Real(Kind=wp)     :: rj(3), rk(3), rjk(3) 
     
     Integer(Kind=wi)  :: list_indx_a(model_data%config%num_atoms)
@@ -1672,7 +1719,7 @@ Contains
     
     Character(Len=256) :: messages(3), message
     Character(Len=256) :: type_error
-    Logical            :: modified, falloc, flag
+    Logical            :: modified, falloc, flag, ftype
     Logical            :: counted(model_data%config%num_atoms)
     Integer(Kind=wi)   :: fail(4)  
    
@@ -1683,7 +1730,7 @@ Contains
     
     ! Search for the value of rmax 
     rmax=-Huge(1.0_wp)
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
       Do j = 1, 3
         If (traj_data%box(i)%cell_length(j) > rmax) Then
            rmax = traj_data%box(i)%cell_length(j)
@@ -1720,30 +1767,42 @@ Contains
       net_frames=0
       
       ! Compute the histogram for atoms of type a and b
-      Do i = traj_data%analysis%frame_ini, traj_data%frames
+      Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
         ! Define the number and list of indexes for type of species "a"
         num_at_a=0
         list_indx_a=0
         Do j = 1, model_data%config%num_atoms
-          If (ANY(traj_data%rdf%type_a==Trim(traj_data%config(i,j)%tag))) Then
-            If (traj_data%region%define%fread) Then
-               Call within_region(traj_data, i, j, flag)
+          itype=1
+          ftype=.True.
+          Do While (itype <= traj_data%rdf%num_type_a .And. ftype)
+            If (traj_data%rdf%type_a(itype)==traj_data%config(i,j)%tag) Then
+              ftype=.False.      
+              If (traj_data%region%define%fread) Then
+                 Call within_region(traj_data, i, j, flag)
+              End If
+              If (flag) Then
+                num_at_a=num_at_a+1
+                list_indx_a(num_at_a)=j
+              End If
             End If
-            If (flag) Then
-              num_at_a=num_at_a+1
-              list_indx_a(num_at_a)=j
-            End If
-          End If
+            itype=itype+1
+          End Do
         End Do
       
         ! Define the number and list of indexes for type of species "b"
         num_at_b=0
         list_indx_b=0
         Do j = 1, model_data%config%num_atoms
-          If (ANY(traj_data%rdf%type_b==Trim(traj_data%config(i,j)%tag))) Then
-            num_at_b=num_at_b+1
-            list_indx_b(num_at_b)=j
-          End If
+          itype=1
+          ftype=.True.
+          Do While (itype <= traj_data%rdf%num_type_b .And. ftype)
+            If (traj_data%rdf%type_b(itype)==traj_data%config(i,j)%tag) Then
+              ftype=.False.      
+              num_at_b=num_at_b+1
+              list_indx_b(num_at_b)=j
+            End If
+            itype=itype+1
+          End Do
         End Do
         
         ! Accummulators
@@ -1751,7 +1810,7 @@ Contains
         accum_a=accum_a+num_at_a
       
         !Define rho_b 
-        rho_b= num_at_b/traj_data%box(i)%volume   
+        rho_b= num_at_b/(traj_data%box(i)%volume)  
         
         ! Calculate the histogram for this particular frame of the trajectory
         If (num_at_a /=0 .And. num_at_b/=0) Then
@@ -1760,33 +1819,26 @@ Contains
           Do j=1, num_at_a 
             indx_a=list_indx_a(j)
             rj=traj_data%config(i,indx_a)%r
-            If (traj_data%region%define%fread) Then
-              Call within_region(traj_data, i, indx_a, flag)
-            Else
-              flag=.True.
-            End If
-            If (flag) Then
-              Do k=1, num_at_b
-                indx_b=list_indx_b(k)
-                If (indx_a /= indx_b .And. (.Not. counted(indx_a)) .And. (.Not. counted(indx_b))) Then
-                  rk=traj_data%config(i,indx_b)%r
-                  rjk=rj-rk
-                  Call check_PBC(rjk, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
-                  m=Floor(norm2(rjk)/traj_data%rdf%dr%value)+1
-                  If (m <= nbins) Then
-                    h(m)=h(m)+2
-                  End If
+            Do k=1, num_at_b
+              indx_b=list_indx_b(k)
+              If (indx_a /= indx_b) Then 
+                rk=traj_data%config(i,indx_b)%r
+                rjk=rj-rk
+                Call check_PBC(rjk, traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
+                m=Floor(norm2(rjk)/traj_data%rdf%dr%value)+1
+                If (m <= nbins) Then
+                  h(m)=h(m)+1
                 End If
-              End Do
-              counted(indx_a)=.True.
-            End If
+              End If
+            End Do
+            counted(indx_a)=.True.
           End Do 
           ! Count net frame
           net_frames=net_frames+1
           ! Normalise
           Do m=1, nbins 
             gr(m)= gr(m)+Real(h(m),Kind=wp)/(num_at_a*rho_b)
-            nn(m)= nn(m)+Real(h(m),Kind=wp)/(num_at_b)
+            nn(m)= nn(m)+Real(h(m),Kind=wp)/(num_at_a)
           End Do
         End If
         
@@ -1807,13 +1859,13 @@ Contains
         Do m=1, nbins
           r_bin=Real(m, Kind=wp)*traj_data%rdf%dr%value
           dV=4.0_wp*pi*r_bin**2*traj_data%rdf%dr%value 
-          gr(m)=gr(m)/dV/Real(net_frames,Kind=wp)
+          gr(m)=gr(m)/(dV*net_frames)
           Do k= 1, m
-           r=(Real(k,Kind=wp))*traj_data%rdf%dr%value
            cn(m)=cn(m)+nn(k)
           End Do
-          cn(m)=cn(m)/Real(net_frames,Kind=wp)
-          Write(iunit,'(2x,(3(f11.3, 6x)))') (Real(m,Kind=wp)-0.5)*traj_data%rdf%dr%value, gr(m), cn(m)
+          cn(m)=cn(m)/net_frames 
+          !Write(iunit,'(2x, f11.3,(2(6x,f11.6)))') (Real(m,Kind=wp)-0.5)*traj_data%rdf%dr%value, gr(m), cn(m)
+          Write(iunit,'(2x, f11.3,(2(6x,f11.6)))') (1.0_wp*m-0.5)*traj_data%rdf%dr%value, gr(m), cn(m)
         End Do
         Write (message,'(1x,a)') 'The RDF analysis was printed to the "'//Trim(files(FILE_RDF)%filename)//'" file.'
         Call info(message, 1)
@@ -1914,6 +1966,8 @@ Contains
               traj_data%species(i,j)%u(:,1)=traj_data%config(i,indx)%r
               traj_data%species(i,j)%u0(:,1)=traj_data%species(i,j)%u(:,1)
               Nini_species=Nini_species+1
+            Else
+              terminated(j)=.True. 
             End If
           End Do
           set_u0=.False.
@@ -1947,7 +2001,7 @@ Contains
               Write(iunit,'(f11.3, 4x, f11.4)') (time-base_time)/1000.0_wp, traj_data%msd%r2
             End If  
           End If  
-          terminated(:)=.False.
+          terminated=.False.
           set_u0=.True.
           If (traj_data%msd%print_all_intervals%stat) Then
             If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
@@ -2127,7 +2181,7 @@ Contains
       icount(m)=0
       i = traj_data%analysis%frame_ini
       hold(m)=.False.
-      Do While (i <= traj_data%frames)
+      Do While (i <= traj_data%analysis%frame_last)
         time=(i-1)*traj_data%timestep%value
         If (set_u0) Then
           ref_indx(m)=traj_data%track_chem%config(i,m)%indx
@@ -2143,7 +2197,7 @@ Contains
             hold(m)=.False.
           End If  
           If (hold(m)) Then
-            If (((time-tchange) > rattling .Or. i==traj_data%frames)) Then
+            If (((time-tchange) > rattling .Or. i==traj_data%analysis%frame_last)) Then
               hold(m)=.False.
               icount(m)=icount(m)+1
               values(icount(m),m)=(tchange-base_time)/1000.0_wp
@@ -2273,7 +2327,7 @@ Contains
         s1=sites(1,1,m)
         s2=sites(2,1,m)
         
-        u0(:,m)=traj_data%config(ini_indx,s2)%r(:)-traj_data%config(ini_indx,s1)%r(:)
+        u0(:,m)=traj_data%config(ini_indx,s2)%r-traj_data%config(ini_indx,s1)%r
         Call check_PBC(u0(:,m), traj_data%box(ini_indx)%cell, traj_data%box(ini_indx)%invcell, 0.5_wp, modified)
         u0(:,m)=u0(:,m)/norm2(u0(:,m))
       End Do
@@ -2290,7 +2344,7 @@ Contains
           s1=sites(1,l,m)
           s2=sites(2,l,m)
 
-          u(:,m)=traj_data%config(i,s2)%r(:)-traj_data%config(i,s1)%r(:)
+          u(:,m)=traj_data%config(i,s2)%r-traj_data%config(i,s1)%r
           Call check_PBC(u(:,m), traj_data%box(i)%cell, traj_data%box(i)%invcell, 0.5_wp, modified)
           u(:,m)=u(:,m)/norm2(u(:,m))
 
@@ -2405,7 +2459,7 @@ Contains
       fexcl=.False.
       l=1
       Do While (l <= model_data%chem%acceptor%N0_excl .And. (.Not. fexcl))
-        If (Trim(tgexcl)==Trim(model_data%chem%acceptor%tg_excl(l))) Then
+        If (tgexcl==model_data%chem%acceptor%tg_excl(l)) Then
            fexcl=.True.
         End If
         l=l+1
@@ -2424,12 +2478,12 @@ Contains
         match_j=.False.
         k=1
         Do While (k <= model_data%chem%acceptor%N0_incl .And. (.Not. match_j))
-          If (Trim(traj_data%config(frame,j)%tag)==Trim(model_data%chem%acceptor%tg_incl(k))) Then
+          If (traj_data%config(frame,j)%tag==model_data%chem%acceptor%tg_incl(k)) Then
             match_j=.True.
             If (fexcl) Then
               l=1
               Do While (l <= model_data%chem%acceptor%N0_excl .And. match_j)
-                If (Trim(traj_data%config(frame,j)%tag)==Trim(model_data%chem%acceptor%tg_excl(l))) Then
+                If (traj_data%config(frame,j)%tag==model_data%chem%acceptor%tg_excl(l)) Then
                    match_j=.False.
                 End If
                 l=l+1
@@ -2440,7 +2494,7 @@ Contains
         End Do
 
         If(match_j) Then
-          Call compute_distance_PBC(traj_data%config(frame,i)%r(:), traj_data%config(frame,j)%r(:),&
+          Call compute_distance_PBC(traj_data%config(frame,i)%r, traj_data%config(frame,j)%r,&
                                   & traj_data%box(frame)%cell, traj_data%box(frame)%invcell, dist)
           flag(1)= dist < min_dist(1)
           flag(2)= dist < min_dist(2)
@@ -2530,7 +2584,7 @@ Contains
     Integer(Kind=wi)   :: i, m
     Integer(Kind=wi)   :: s1, s2, s3
     
-    Do i = traj_data%analysis%frame_ini, traj_data%frames
+    Do i = traj_data%analysis%frame_ini, traj_data%analysis%frame_last
       Do  m= 1, model_data%chem%N0%value
         Call compute_closest_pairs(traj_data, model_data, i, m, s1, s2, s3)
         traj_data%track_chem%config(i,m)%nn_indx(1)=s1
@@ -2806,7 +2860,7 @@ Contains
     Real(Kind=wp)      :: tchange(model_data%chem%N0%value)
     Character(Len=256) :: method
     
-    method=Trim(traj_data%lifetime%method%type)
+    method=traj_data%lifetime%method%type
     
     If (traj_data%lifetime%print_all_intervals%stat) Then
      ! Print header
@@ -3036,7 +3090,7 @@ Contains
     If (Trim(what) == 'CHEM_OCF') Then
       quantity='OCF'
     Else
-      quantity=Trim(what)
+      quantity=what
     End If
     
     fcompute=.True.
@@ -3230,6 +3284,8 @@ Contains
                 traj_data%species(i,j)%u0(:,2)=traj_data%species(i,j)%u(:,2)
               End If
               Nini_species=Nini_species+1
+            Else
+              terminated(j)=.True.
             End If
           End Do
           set_u0=.False.
@@ -3249,7 +3305,7 @@ Contains
               Call rotation_vector_monitored_species(traj_data, i, j)
               Call orientational_correlation_term_monitored_species(traj_data, i, j, suma_i)  
             Else
-              terminated(j)=.True.
+              !terminated(j)=.True.
             End If
           End If  
         End Do
@@ -3262,7 +3318,7 @@ Contains
               Write(iunit,'(f11.3, 4x, 1(f11.3))') (time-base_time)/1000.0_wp, suma_i
             End If
           End If  
-          terminated(:)=.False.
+          terminated=.False.
           set_u0=.True.
           If (traj_data%ocf%print_all_intervals%stat) Then
             If ((traj_data%analysis%N_seg /=1) .And. (k /= traj_data%analysis%N_seg)) Then
@@ -3499,7 +3555,7 @@ Contains
     Character(Len=256) :: check
     Integer(Kind=wi)   :: i, stat
 
-    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=Trim(files(FILE_TRAJECTORY)%filename),Status='old')
+    Open(Newunit=files(FILE_TRAJECTORY)%unit_no, File=files(FILE_TRAJECTORY)%filename,Status='old')
 
     i=1
     loop_traj=.True.
@@ -3745,7 +3801,7 @@ Contains
       j=1
       flag=.True.
       Do While (j <= model_data%input_composition%atomic_species .And. flag)
-        If (Trim(model_data%input_composition%tag(j))==Trim(traj_data%unchanged%tag%type)) Then
+        If (model_data%input_composition%tag(j)==traj_data%unchanged%tag%type) Then
           flag=.False.
         End If  
         j=j+1
@@ -3812,7 +3868,7 @@ Contains
 
     Do j=1, traj_data%unchanged%N0
       k=traj_data%unchanged%indexes(j) 
-      If (Trim(model_data%config%atom(k)%tag)/=Trim(traj_data%unchanged%tag%type)) Then
+      If ((model_data%config%atom(k)%tag)/=(traj_data%unchanged%tag%type)) Then
         Call info(' ', 1)
         Write(word,*) k
         Write (messages(1),'(2(1x,a))') Trim(error_set), 'Index "'//Trim(Adjustl(word))//'" (defined in list_indexes)&
@@ -3860,7 +3916,7 @@ Contains
       End If
       Do j=1, traj_data%rdf%num_type_a-1
         Do k=j+1, traj_data%rdf%num_type_a
-          If (Trim(traj_data%rdf%type_a(j))==Trim(traj_data%rdf%type_a(k))) Then
+          If (traj_data%rdf%type_a(j)==traj_data%rdf%type_a(k)) Then
             Write (messages(1),'(4(1x,a))') Trim(error_set), 'Tag', Trim(traj_data%rdf%type_a(j)), 'is repeated in the list!'
             Write (messages(2),'((1x,a))') 'The tags defined in "tags_species_a" must be  different'
             Call info(messages, 2)
@@ -3883,7 +3939,7 @@ Contains
       End If
       Do j=1, traj_data%rdf%num_type_b-1
         Do k=j+1, traj_data%rdf%num_type_b
-          If (Trim(traj_data%rdf%type_b(j))==Trim(traj_data%rdf%type_b(k))) Then
+          If (traj_data%rdf%type_b(j)==traj_data%rdf%type_b(k)) Then
             Write (messages(1),'(4(1x,a))') Trim(error_set), 'Tag', Trim(traj_data%rdf%type_b(j)), 'is repeated in the list!'
             Write (messages(2),'((1x,a))') 'The tags defined in "tags_species_b" must be  different'
             Call info(messages, 2)
@@ -3919,18 +3975,6 @@ Contains
       End If 
     End Do
     
-    Do k= 1, traj_data%rdf%num_type_a-1
-      Do j= k, traj_data%rdf%num_type_a
-        If (Trim(el(k)) /= Trim(el(j))) Then
-          Write (messages(1),'(2(1x,a))') Trim(error_set), 'Tags " '//Trim(traj_data%rdf%type_a(k))//' " and " '&
-                                      &//Trim(traj_data%rdf%type_a(j))//' " defined in "tags_species_b" correspond to two different&
-                                      & chemical elements!' 
-          Call info(messages, 1)
-          Call error_stop(' ') 
-        End If
-      End Do
-    End Do   
-    
     ! Check if all tags correspond to the same element (tybe b)
     Do k=1, traj_data%rdf%num_type_b
       tg(k)=Trim(traj_data%rdf%type_b(k))
@@ -3951,18 +3995,6 @@ Contains
         Call error_stop(' ') 
       End If 
     End Do
-    
-    Do k= 1, traj_data%rdf%num_type_b-1
-      Do j= k, traj_data%rdf%num_type_b
-        If (Trim(el(k)) /= Trim(el(j))) Then
-          Write (messages(1),'(2(1x,a))') Trim(error_set), 'Tags " '//Trim(traj_data%rdf%type_b(k))//' " and " '&
-                                      &//Trim(traj_data%rdf%type_b(j))//' " defined in "tags_species_b" correspond to two different&
-                                      & chemical elements!' 
-          Call info(messages, 1)
-          Call error_stop(' ') 
-        End If
-      End Do
-    End Do   
     
   End Subroutine check_rdf
 
@@ -4095,6 +4127,7 @@ Contains
 
     If (traj_data%analysis%invoke%fread) Then
       Call check_time_directive(traj_data%analysis%time_interval, 'time_interval',  error_set, .False.)
+      Call check_time_directive(traj_data%analysis%end_time, 'end_time',  error_set, .False.)      
       Call check_time_directive(traj_data%analysis%ignore_initial, 'ignore_initial', error_set, .False.)
       Call check_time_directive(traj_data%analysis%overlap_time, 'overlap_time' ,error_set, .False.)
 
@@ -4280,57 +4313,116 @@ Contains
     Type(file_type),    Intent(In   ) :: files(:)
     Type(traj_type),    Intent(InOut) :: traj_data
 
-    Character(Len=256)  :: error_set, message
-    Integer(Kind=wi)    :: i, k, j, l, kref, kini
+    Character(Len=256)  :: error_set, warn_set, message
+    Integer(Kind=wi)    :: i, k, j, l, kref, kini, frames
     Logical             :: flag, one_seg
     Real(Kind=wp)       :: time, tend, teff, tini, tref
     
     error_set = '***ERROR in the &data_analysis block of file '//Trim(files(FILE_SET)%filename)//' -'
+    warn_set = '***WARNING from the &data_analysis block of file '//Trim(files(FILE_SET)%filename)//' -'
 
+   
+    If (traj_data%analysis%end_time%fread) Then
+      If (traj_data%analysis%end_time%value > (traj_data%frames-1)*traj_data%timestep%value) Then
+        Write (message,'(2(1x,a))') Trim(warn_set), 'The value assigned to "'//Trim(traj_data%analysis%end_time%tag)//&
+                                 &'" is larger than the total time for the trajectory. The analysis will be performed&
+                                 & up to largest recorded time.'
+        Call info(message, 1)          
+        tend=(traj_data%frames-1)*traj_data%timestep%value
+        frames=traj_data%frames
+      Else
+
+        If (traj_data%timestep%value>=traj_data%analysis%end_time%value) Then
+          Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%end_time%tag)//&
+                               &'" must be larger that the timestep for the trajectory. Please check the directives.'
+          Call info(message, 1) 
+          Call error_stop(' ')
+        End If      
+        
+        If (traj_data%analysis%end_time%value > (traj_data%frames-2)*traj_data%timestep%value) Then
+          Write (message,'(2(1x,a))') Trim(warn_set), 'The value assigned to "'//Trim(traj_data%analysis%end_time%tag)//&
+                                   &'" is in between the last two recorded times. The analysis will be performed&
+                                   & up to largest recorded time.'
+          Call info(message, 1)          
+          tend=(traj_data%frames-1)*traj_data%timestep%value
+          frames=traj_data%frames
+        Else
+          tend=traj_data%analysis%end_time%value
+          i=1
+          flag=.True.
+          Do While (i <= traj_data%frames .And. flag)
+            time=(i-1)*traj_data%timestep%value
+            If (time >= tend) Then
+              frames=i
+              flag=.False.
+            End If
+            i=i+1
+          End do           
+        End If
+      End If
+    Else
+      tend=(traj_data%frames-1)*traj_data%timestep%value
+      frames=traj_data%frames
+    End If
+    
+    ! Set the net number of frames
+    traj_data%analysis%frame_last=frames
+    
     If (.Not. traj_data%analysis%ignore_initial%fread) Then
        traj_data%analysis%ignore_initial%value=-traj_data%timestep%value
+       traj_data%analysis%frame_ini = 1
+       tini=0.0_wp
+    Else
+      If (tend <= traj_data%analysis%ignore_initial%value) Then
+        Call info(' ', 1)
+        If (.Not. traj_data%analysis%end_time%fread) Then
+          Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%ignore_initial%tag)//&
+                                 &'" is larger than (or equal) the total time for the trajectory. Please check&
+                                 & the settings and the value for the "timestep" directive.'
+        Else
+          Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%ignore_initial%tag)//&
+                                 &'" is larger than (or equal) the value set for "'//Trim(traj_data%analysis%end_time%tag)//&
+                                 &'". Please check settings'        
+        End If
+        Call info(message, 1)
+        Call error_stop(' ')
+      Else  
+        i=1
+        flag=.True.
+        Do While (i <= traj_data%frames .And. flag)
+          time=(i-1)*traj_data%timestep%value
+          If (time >= traj_data%analysis%ignore_initial%value) Then
+            traj_data%analysis%frame_ini = i
+            tini=(i-1)*traj_data%timestep%value
+            flag=.False.
+          End If
+          i=i+1
+        End do 
+      End If   
     End If
-    
-    tend=(traj_data%frames-1)*traj_data%timestep%value 
-    If (tend <= traj_data%analysis%ignore_initial%value) Then
-      Call info(' ', 1)
-      Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%ignore_initial%tag)//&
-                               &'" is larger than the total time for the trajectory. Please check&
-                               & the settings and the value for the "timestep" directive.'
-      Call info(message, 1)
-      Call error_stop(' ')
-    End If   
-
-    i=1
-    flag=.True.
-    Do While (i <= traj_data%frames .And. flag)
-      time=(i-1)*traj_data%timestep%value
-      If (time >= traj_data%analysis%ignore_initial%value) Then
-        traj_data%analysis%frame_ini = i
-        tini=(i-1)*traj_data%timestep%value
-        flag=.False.
-      End If
-      i=i+1
-    End do 
-    
-    If (.Not. traj_data%analysis%time_interval%fread) Then
-       traj_data%analysis%time_interval%value=tend
-    End If
-
-    teff=tend-tini
-    If (.Not. traj_data%analysis%overlap_time%fread) Then
-       traj_data%analysis%overlap_time%value=teff+traj_data%timestep%value 
-    End If
+  
+  
+    teff=tend-tini 
 
     ! Compare timestep with other time settings of &data_analysis
     If (traj_data%analysis%time_interval%fread) Then
-     If (traj_data%timestep%value>=traj_data%analysis%time_interval%value) Then
-       Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%time_interval%tag)//&
-                              &'" must be larger that the timestep for the trajectory. Please check the "timestep" directive.'
-       Call info(message, 1) 
-       Call error_stop(' ')
-     End If
+      If (traj_data%timestep%value>=traj_data%analysis%time_interval%value) Then
+        Write (message,'(2(1x,a))') Trim(error_set), 'The value assigned to "'//Trim(traj_data%analysis%time_interval%tag)//&
+                               &'" must be larger that the timestep for the trajectory. Please check the "timestep" directive.'
+        Call info(message, 1) 
+        Call error_stop(' ')
+      End If
+      If (teff<traj_data%analysis%time_interval%value) Then
+           Write (message,'(2(1x,a))') Trim(warn_set), 'The input value for the "'//Trim(traj_data%analysis%time_interval%tag)//&
+                                   &'" directive was too large and has been redefined to comply with the rest&
+                                   & of the settings and the length of the trajectory.'
+          Call info(message, 1)
+          traj_data%analysis%time_interval%value=teff
+      End If
+    Else
+      traj_data%analysis%time_interval%value=teff
     End If
+ 
 
     If (traj_data%analysis%overlap_time%fread) Then
       If (traj_data%timestep%value > traj_data%analysis%overlap_time%value) Then
@@ -4339,6 +4431,16 @@ Contains
         Call info(message, 1) 
         Call error_stop(' ')
       End If
+      If (teff<traj_data%analysis%overlap_time%value) Then
+           Write (message,'(2(1x,a))') Trim(warn_set), 'The input value for the "'//Trim(traj_data%analysis%overlap_time%tag)//&
+                                   &'" directive was too large and has been redefined to comply with the rest of the&
+                                   & directive and the length of the trajectory.'
+          Call info(message, 1)
+          traj_data%analysis%time_interval%value=teff
+      End If      
+      
+    Else
+      traj_data%analysis%overlap_time%value=teff+traj_data%timestep%value      
     End If
     
     ! Calculate the number of segments
@@ -4346,7 +4448,7 @@ Contains
     one_seg=.True.
     k=traj_data%analysis%frame_ini
     tref=tini; kini=k; flag=.True.
-    Do While (k <= traj_data%frames)
+    Do While (k <= frames)
       time=(k-1)*traj_data%timestep%value
       If (time>=(tref+traj_data%analysis%time_interval%value)) Then
         i=i+1  
@@ -4389,7 +4491,7 @@ Contains
       one_seg=.True.
       k=traj_data%analysis%frame_ini
       tref=tini; kini=k; flag=.True.
-      Do While (k <= traj_data%frames)
+      Do While (k <= frames)
         time=(k-1)*traj_data%timestep%value
         If (time>=(tref+traj_data%analysis%time_interval%value)) Then
           i=i+1
@@ -4569,10 +4671,6 @@ Contains
     Character(Len=256) :: messages(4), word
     Integer(Kind=wi)   :: k, j
 
-    Call info(' ', 1) 
-    Call info('Trajectory settings', 1) 
-    Call info('===================', 1) 
-
     Write (messages(1),'(1x,a)') '- by specification, the trajectory corresponds to the "'&
                                  &//Trim(traj_data%ensemble%type)//'" ensemble and was recorded in "'&
                                  &//Trim(model_data%input_geometry_format%type)//'" format'
@@ -4581,12 +4679,21 @@ Contains
     Write (messages(1),'(1x,a,f5.2,a)') '- the time step between recorded configurations is '//Trim(Adjustl(word))//' fs'
     Call info(messages, 1)
 
+    If (traj_data%analysis%end_time%fread) Then
+      If ((traj_data%analysis%end_time%value-(traj_data%frames-1)*traj_data%timestep%value)<0.0_wp) Then
+        Write(word,'(f8.3)') traj_data%analysis%end_time%value/1000.0_wp
+        Write (messages,'(1x,a)') '- the analysis will consider up to '//Trim(Adjustl(word))//' ps of the trajectory' 
+        Call info(messages, 1)
+      End If
+    End If        
+    
     If (traj_data%analysis%ignore_initial%fread) Then
       Write(word,'(f8.3)') traj_data%analysis%ignore_initial%value/1000.0_wp
       Write (messages(1),'(1x,a)') '- the initial '//Trim(Adjustl(word))//' ps of the trajectory&
                                    & will be discarded' 
       Call info(messages, 1)
     End If
+    
     
     If (traj_data%ocf%invoke%fread .Or. traj_data%chem_ocf%invoke%fread .Or. &
         traj_data%msd%invoke%fread .Or. traj_data%lifetime%invoke%fread) Then
@@ -4613,8 +4720,12 @@ Contains
         End If
         If (traj_data%analysis%time_interval%fread) Then
           Write(word,'(f8.3)') traj_data%analysis%time_interval%value/1000.0_wp
-          Write (messages(1),'(2x,a)') '- the data analysis will be executed using time intervals of '&
+          If(traj_data%analysis%N_seg /= 1) Then
+            Write (messages(1),'(2x,a)') '- the data analysis will be executed using time intervals of '&
                                        &//Trim(Adjustl(word))//' ps' 
+          Else
+            Write (messages(1),'(2x,a)') '- the data analysis will be executed without the use of time intervals'           
+          End If
           Call info(messages, 1)
         End If
         If (traj_data%analysis%overlap_time%fread  .And. (traj_data%analysis%N_seg /=1)) Then
@@ -4639,13 +4750,14 @@ Contains
             Call info(messages, 1)
           End If
         Else
-          If (Trim(traj_data%ocf%u_definition%type)/='bond_12-13' .And. & 
-            Trim(traj_data%ocf%u_definition%type)/='bond_123') Then 
+          If (Trim(traj_data%ocf%u_definition%type)/='bond_12-13' .And. &
+              Trim(traj_data%ocf%u_definition%type)/='plane' .And. & 
+              Trim(traj_data%ocf%u_definition%type)/='bond_123') Then 
             Write (messages(1),'(1x,a)')  '**WARNING: the "'//Trim(traj_data%ocf%u_definition%type)//'"& 
                                            & option for the rotating unit vector (u_definition)&
                                            & is not recommended for most studies.'
             Write (messages(2),'(1x,a)')  '           Unless the user is fully certain, either the&
-                                           & "bond_12-13" or "bond_123" option should be used instead.'
+                                           & "bond_12-13", "plane" or "bond_123" option should be used instead.'
             Call info(messages, 2)
           End If
         End If
@@ -4950,7 +5062,7 @@ Contains
     ! Copy tracked species only if change_chemistry is set to True
     If(model_data%change_chemistry%stat) Then 
       Do l = 1, model_data%chem%N0%value
-        traj_data%track_chem%config(frame,l)%r(:)=model_data%track_chem(l)%r(:)
+        traj_data%track_chem%config(frame,l)%r=model_data%track_chem(l)%r
         traj_data%track_chem%config(frame,l)%indx=model_data%track_chem(l)%indx
         traj_data%track_chem%config(frame,l)%tag=model_data%track_chem(l)%tag
       End Do

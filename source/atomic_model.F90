@@ -440,7 +440,7 @@ Contains
     
     ! Reset identified according to what has changed or not
     Do j=1, model_data%config%num_atoms 
-      If (Trim(model_data%config%atom(j)%tag)==Trim(model_data%config%atom(j)%tag_0)) Then
+      If (model_data%config%atom(j)%tag==model_data%config%atom(j)%tag_0) Then
         model_data%config%atom(j)%identified=.False. 
       Else
         model_data%config%atom(j)%identified=.True.
@@ -467,7 +467,7 @@ Contains
     
     Do j = 1, model_data%config%Nmax_species
       k = model_data%config%species(j)%list(1)
-      If(Trim(model_data%config%atom(k)%tag)==Trim(model_data%species_definition%reference_tag%type)) Then
+      If(model_data%config%atom(k)%tag==model_data%species_definition%reference_tag%type) Then
         If (model_data%config%species(j)%alive) Then
           model_data%config%species(j)%alive=.True.
         Else
@@ -524,11 +524,11 @@ Contains
           loop_sp=.True.
           m=1
           Do While (m <= model_data%species_definition%num_components .And. loop_sp)
-            If (Trim(model_data%config%atom(k)%element)==Trim(model_data%species_definition%element(m)) .And. k/=ka .And.&
+            If ((model_data%config%atom(k)%element==model_data%species_definition%element(m)) .And. k/=ka .And.&
                (.Not. model_data%config%atom(k)%identified) .And. (.Not. model_data%config%atom(ka)%identified) ) Then
                ! Compute distances
-               a=model_data%config%atom(k)%r(:)
-               b=model_data%config%atom(ka)%r(:)
+               a=model_data%config%atom(k)%r
+               b=model_data%config%atom(ka)%r
                Call compute_distance_PBC(a, b, model_data%config%cell, model_data%config%invcell, dist)
                ! Check if distances are within a given cutoff
                If (dist<bond_cutoff) Then 
@@ -616,6 +616,10 @@ Contains
       Write (messages(6),'(a)') ' 4) wrong definition of the monitored species.&
                                 & Check the "reference_tag" and the &atomic_components block.'
       Call info(messages, 6)
+      If (model_data%chem%acceptor%info_exclude%fread)Then
+        Write (messages(1),'(a)') ' 5) Inadequate use of the "exclude_pairs" directive. Try removing this directive.'  
+        Call info(messages, 1)
+      End If 
       If (model_data%change_chemistry%stat) Then
          Write (messages(1),'(a)') '************************************************************************************'
          Write (messages(2),'(a)') '*** IMPORTANT: also check the settings of the &search_chemistry block, particularly '
@@ -632,7 +636,7 @@ Contains
 
   Subroutine obtain_maximum_number_species(model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Obtain the maximum amount of spieces
+    ! Obtain the maximum amount of specis
     !
     ! author    - i.scivetti March 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -643,7 +647,7 @@ Contains
     ! For relevent indexes, find the initial index list
     model_data%config%Nmax_species=0
     Do j = 1, model_data%config%num_atoms
-      If(Trim(model_data%config%atom(j)%tag_0)==Trim(model_data%species_definition%reference_tag%type)) Then
+      If(model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
        model_data%config%Nmax_species=model_data%config%Nmax_species+1 
       End If
     End Do 
@@ -662,8 +666,7 @@ Contains
   
     icount=0
     Do j = 1, model_data%config%num_atoms
-      If(Trim(model_data%config%atom(j)%tag_0)==&
-       & Trim(model_data%species_definition%reference_tag%type)) Then
+      If(model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
        icount=icount+1 
        model_data%config%species(icount)%list(1)=j
       End If
@@ -693,7 +696,7 @@ Contains
         dist_min=Huge(1.0_wp)
         Do  j = 1, model_data%chem%N0%value
           indx_new  = model_data%chem%indx_new(j)
-          Call compute_distance_PBC(model_data%config%atom(indx_new)%r(:), model_data%track_chem(i)%r0(:),&
+          Call compute_distance_PBC(model_data%config%atom(indx_new)%r, model_data%track_chem(i)%r0,&
                                 & model_data%config%cell, model_data%config%invcell, dist)  
           If (dist < dist_min) Then
              dist_min=dist
@@ -716,8 +719,8 @@ Contains
 
     ! Update indexes
     Do i = 1, model_data%chem%N0%value
-      model_data%track_chem(i)%r(:)=model_data%config%atom(model_data%track_chem(i)%indx)%r(:)
-      model_data%track_chem(i)%r0(:)=model_data%config%atom(model_data%track_chem(i)%indx)%r(:)
+      model_data%track_chem(i)%r=model_data%config%atom(model_data%track_chem(i)%indx)%r
+      model_data%track_chem(i)%r0=model_data%config%atom(model_data%track_chem(i)%indx)%r
       model_data%track_chem(i)%tag=model_data%config%atom(model_data%track_chem(i)%indx)%tag
     End Do
     model_data%chem%indx_prev = model_data%chem%indx_new
@@ -781,15 +784,17 @@ Contains
     End If
 
     ! Copy initial configuration for environment checking
-    Do j= 1, 3
-      model_data%config%atom(:)%r0(j)=model_data%config%atom(:)%r(j)
+    Do i=1, model_data%config%num_atoms
+      model_data%config%atom(i)%r0=model_data%config%atom(i)%r
     End Do
 
     ! Reset bonds indexes for retag  
-    Do k=1, max_neighbours 
-      model_data%config%atom(:)%bonds0(k)=model_data%config%atom(:)%bonds(k)
+    Do i=1, model_data%config%num_atoms
+      Do k=1, max_neighbours 
+        model_data%config%atom(i)%bonds0(k)=model_data%config%atom(i)%bonds(k)
+      End Do
+      model_data%config%atom(i)%Nbonds0=model_data%config%atom(i)%Nbonds
     End Do
-    model_data%config%atom(:)%Nbonds0=model_data%config%atom(:)%Nbonds
 
   End Subroutine identify_initial_chemistry
 
@@ -807,7 +812,7 @@ Contains
     Write (messages(1), '(1x,a)') 'Please review the settings. Possible reasons:'
     Call info (messages, 1)
 
-    If (Trim(condition)=='failed_initial_counting') Then
+    If (condition=='failed_initial_counting') Then
       
       If (model_data%number_species_found > model_data%chem%N0%value) Then
         Write (messages(1), '(1x,a)') '- value for the "cutoff" directive of the "&bonding_criteria" sub-block is too large'
@@ -831,16 +836,19 @@ Contains
                                     & "&bonding_criteria" block is wrong'
       Call info (messages, 2)
 
-    Else If (Trim(condition)=='failed_counting') Then
+    Else If (condition=='failed_counting') Then
       If (model_data%number_species_found > model_data%chem%N0%value) Then
         Write (messages(1), '(1x,a)') '- the "cutoff" directive of the "&acceptor_criteria" sub-block is too large'
       Else  
         Write (messages(1), '(1x,a)') '- the "cutoff" directive of the "&acceptor_criteria" sub-block is too low'
       End If
-      Call info (messages, 1)
+      If (model_data%chem%acceptor%info_exclude%fread) Then
+        Write (messages(1), '(1x,a)') '- inadequate use of the "exclude_pairs" directive. Try by removing this directive.'
+        Call info (messages, 1)
+      End If
     End If
 
-    If (Trim(model_data%input_geometry_format%type)=='xyz') Then
+    If (model_data%input_geometry_format%type=='xyz') Then
        Write (messages(1),'(1x,a)') '- vectors defined in the &simulation_cell block do not correspond to the generated trajectory'
        Call info (messages, 1)
     End If
@@ -864,6 +872,7 @@ Contains
     Integer(Kind=wi)  :: k1, k2
     Integer(Kind=wi)  :: n1, n2, ni
     Integer(Kind=wi)  :: icount, ihit
+    Integer(Kind=wi)  :: icc, indx
     Integer(Kind=wi)  :: N0_counted, N0_missed
 
     Logical            :: match, fenv, fprev
@@ -950,14 +959,14 @@ Contains
                 !model_data%config%atom(n2)%tag=Trim(model_data%config%atom(n2)%tag)//'*'       
               End Do
               If (k2/=1) Then
-                If ( ( .Not. (ANY(model_data%chem%acceptor%accum_indxs==m)) ) .And. &
-                     ( .Not. (ANY(model_data%chem%indx_prev==m)) ) ) then
+                If ( ( .Not. (Any(model_data%chem%acceptor%accum_indxs==m)) ) .And. &
+                     ( .Not. (Any(model_data%chem%indx_prev==m)) ) ) then
                   ihit=ihit+1
                   N0_counted=N0_counted+1
                   model_data%chem%acceptor%accum_indxs(N0_counted)=m
                 End If
               Else
-                If (.Not. (ANY(model_data%chem%acceptor%accum_indxs==m)) ) then
+                If (.Not. (Any(model_data%chem%acceptor%accum_indxs==m)) ) then
                   ihit=ihit+1
                   N0_counted=N0_counted+1
                   model_data%chem%acceptor%accum_indxs(N0_counted)=m
@@ -971,10 +980,16 @@ Contains
         ! If none of the sites within the environment has N0 bonds, we allocate the centre of the environment in a list,
         ! in case there are missing species at the end
         If (ihit == 0) Then
-           if ( .Not. (ANY(model_data%chem%acceptor%accum_indxs==model_data%chem%acceptor%list(1) ))) then     
+           icc=0     
+           Do indx = 1, N0_counted     
+             If ( .Not. (model_data%chem%acceptor%accum_indxs(indx)==model_data%chem%acceptor%list(1))) then     
+               icc=icc+1
+             End If
+           End Do
+           If (icc == N0_counted) Then
              N0_missed=N0_missed+1
              model_data%chem%acceptor%missed(N0_missed)=model_data%chem%acceptor%list(1)
-           End If
+           End If    
         End If  
       End If
     End Do
@@ -1093,21 +1108,21 @@ Contains
     m=1
 
     Do While (m <= model_data%chem%acceptor%N0_incl .And. (.Not. match1))
-      If(Trim(model_data%config%atom(i)%tag)==Trim(model_data%chem%acceptor%tg_incl(m)) .Or.&
-        Trim(model_data%config%atom(j)%tag)==Trim(model_data%chem%acceptor%tg_incl(m))) Then
+      If(model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m) .Or.&
+         model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(m)) Then
         match1=.True. 
-        If((Trim(model_data%config%atom(i)%tag)==Trim(model_data%chem%acceptor%tg_incl(m))) .And. &
+        If((model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m)) .And. &
            (.Not. model_data%config%atom(i)%identified))Then
           indx=i
-          If (((Trim(model_data%config%atom(j)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
+          If (((model_data%config%atom(j)%element==model_data%chem%bonds%species%type) .And. &
               (.Not. model_data%config%atom(j)%identified))) Then
             match2=.True.  
           End If
         
-        Else If((Trim(model_data%config%atom(j)%tag)==Trim(model_data%chem%acceptor%tg_incl(m))) .And.&
+        Else If((model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(m)) .And.&
                 (.Not. model_data%config%atom(j)%identified)) Then
           indx=j
-          If ((Trim(model_data%config%atom(i)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
+          If ((model_data%config%atom(i)%element==model_data%chem%bonds%species%type) .And. &
               (.Not. model_data%config%atom(i)%identified)) Then
             match2=.True.  
           End If
@@ -1118,15 +1133,15 @@ Contains
     End Do
 
     If (match1 .And. match2) Then
-      Call compute_distance_PBC(model_data%config%atom(i)%r(:), model_data%config%atom(j)%r(:),&
+      Call compute_distance_PBC(model_data%config%atom(i)%r, model_data%config%atom(j)%r,&
                               & model_data%config%cell, model_data%config%invcell, dist)
       If (dist < model_data%chem%bonds%cutoff%value ) Then
         model_data%config%atom(indx)%Nbonds=model_data%config%atom(indx)%Nbonds+1 
         N0=model_data%config%atom(indx)%Nbonds
-        If(Trim(model_data%config%atom(i)%element)==Trim(model_data%chem%bonds%species%type)) Then
+        If(model_data%config%atom(i)%element==model_data%chem%bonds%species%type) Then
           model_data%config%atom(i)%identified=.True.
           model_data%config%atom(j)%bonds(N0)=i
-        Else If(Trim(model_data%config%atom(j)%element)==Trim(model_data%chem%bonds%species%type)) Then
+        Else If(model_data%config%atom(j)%element==model_data%chem%bonds%species%type) Then
           model_data%config%atom(j)%identified=.True.
           model_data%config%atom(i)%bonds(N0)=j
         End If
@@ -1199,9 +1214,9 @@ Contains
         If (model_data%chem%acceptor%info_exclude%fread)Then
           m=1
           Do While (m <= model_data%chem%acceptor%N0_excl .And. (.Not. match_self))
-            If(Trim(model_data%config%atom(i)%tag)==Trim(model_data%chem%acceptor%tg_excl(m)) .And.&
-               Trim(model_data%config%atom(j)%tag)==Trim(model_data%chem%acceptor%tg_excl(m))) Then
-               match_self=.True. 
+            If(model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_excl(m) .And.&
+               model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_excl(m)) Then
+               match_self=.True.
             End If
             m=m+1
           End Do
@@ -1211,19 +1226,19 @@ Contains
           match_i=.False.
           match_j=.False.
           Do k = 1, model_data%chem%acceptor%N0_incl
-            If (Trim(model_data%config%atom(i)%tag)==Trim(model_data%chem%acceptor%tg_incl(k))) Then  
+            If (model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(k)) Then  
               match_i=.True.
             End If
-            If (Trim(model_data%config%atom(j)%tag)==Trim(model_data%chem%acceptor%tg_incl(k))) Then  
+            If (model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(k)) Then  
               match_j=.True.
             End If
           End Do
           If(match_i .And. match_j) Then
             If (model_data%chem%acceptor%check) Then
-              Call compute_distance_PBC(model_data%config%atom(i)%r0(:), model_data%config%atom(j)%r0(:),&
+              Call compute_distance_PBC(model_data%config%atom(i)%r0, model_data%config%atom(j)%r0,&
                                     & model_data%config%cell, model_data%config%invcell, dist)
             Else                
-              Call compute_distance_PBC(model_data%config%atom(i)%r(:), model_data%config%atom(j)%r(:),&
+              Call compute_distance_PBC(model_data%config%atom(i)%r, model_data%config%atom(j)%r,&
                                     & model_data%config%cell, model_data%config%invcell, dist)
             End If                
             If (dist < model_data%chem%acceptor%cutoff%value) Then
@@ -1309,13 +1324,13 @@ Contains
 
     Do k = 1, model_data%extra_bonds%N0
       If(.Not. match) Then
-        f1=(Trim(model_data%config%atom(i)%tag)==Trim(model_data%extra_bonds%tg1(k)) .And.&
-           Trim(model_data%config%atom(j)%tag)==Trim(model_data%extra_bonds%tg2(k))) 
-        f2=(Trim(model_data%config%atom(j)%tag)==Trim(model_data%extra_bonds%tg1(k)) .And.&
-           Trim(model_data%config%atom(i)%tag)==Trim(model_data%extra_bonds%tg2(k))) 
+        f1=(model_data%config%atom(i)%tag==model_data%extra_bonds%tg1(k) .And.&
+            model_data%config%atom(j)%tag==model_data%extra_bonds%tg2(k)) 
+        f2=(model_data%config%atom(j)%tag==model_data%extra_bonds%tg1(k) .And.&
+            model_data%config%atom(i)%tag==model_data%extra_bonds%tg2(k)) 
 
         If(f1 .Or. f2) Then
-          Call compute_distance_PBC(model_data%config%atom(i)%r(:), model_data%config%atom(j)%r(:),&
+          Call compute_distance_PBC(model_data%config%atom(i)%r, model_data%config%atom(j)%r,&
                                    & model_data%config%cell, model_data%config%invcell, dist)
           If (dist < model_data%extra_bonds%bond(k)%value) Then
              match=.True.
@@ -1325,13 +1340,13 @@ Contains
         End If   
 
         If (match) Then
-          If((Trim(model_data%config%atom(i)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
+          If((model_data%config%atom(i)%element==model_data%chem%bonds%species%type) .And. &
              (.Not. model_data%config%atom(i)%identified)) Then
              model_data%chem%indx_new(l) = j
              model_data%config%atom(i)%identified=.True.
              model_data%config%atom(j)%bonds(1)=i
              model_data%config%atom(j)%Nbonds=1
-          Else If((Trim(model_data%config%atom(j)%element)==Trim(model_data%chem%bonds%species%type)) .And. &
+          Else If((model_data%config%atom(j)%element==model_data%chem%bonds%species%type) .And. &
              (.Not. model_data%config%atom(j)%identified)) Then
              model_data%chem%indx_new(l) = i
              model_data%config%atom(j)%identified=.True.
@@ -1358,9 +1373,9 @@ Contains
     Integer(Kind=wi),  Intent(In   ) :: frame
     Character(Len=*),  Intent(In   ) :: ensemble
 
-    If (Trim(model_data%input_geometry_format%type) == 'xyz') Then
+    If (model_data%input_geometry_format%type == 'xyz') Then
       Call read_input_xyz_format(files, model_data)
-    Else If (Trim(model_data%input_geometry_format%type) == 'vasp') Then
+    Else If (model_data%input_geometry_format%type == 'vasp') Then
       Call read_input_vasp_format(files, model_data, frame, ensemble)
     End If
 
@@ -1574,7 +1589,7 @@ Contains
         loop=.True.
         k=1
         Do While (k <= NPTE .And. loop)
-          If (Trim(chemsymbol(k))==Trim(model_data%config%element_file(i))) Then
+          If (chemsymbol(k)==model_data%config%element_file(i)) Then
             loop=.False.
           End If
           k=k+1
@@ -1705,7 +1720,7 @@ Contains
       End Do
     Else If (Trim(model_data%config%list%coord_type) == 'direct') Then
       Do i = 1, model_data%config%num_atoms 
-        v_cart=MatMul(model_data%config%atom(i)%r, model_data%config%cell)
+        v_cart(1:3)=MatMul(model_data%config%atom(i)%r(1:3), model_data%config%cell(1:3,1:3))
         model_data%config%atom(i)%r=model_data%config%scale_factor_vasp*v_cart
       End Do
     End If
@@ -1837,10 +1852,10 @@ Contains
     End If
     ! Move all inside the ce
     Do i = 1, model_data%config%num_atoms
-      r(:)=model_data%config%atom(i)%r(:)
+      r=model_data%config%atom(i)%r
       Call check_PBC(r, model_data%config%cell, model_data%config%invcell, 1.0_wp, changed_geo(i))
       If (changed_geo(i)) Then
-        model_data%config%atom(i)%r(:)=r(:)
+        model_data%config%atom(i)%r=r
       End If
     End Do
 
@@ -1848,7 +1863,7 @@ Contains
     ! between the coordinates and the cell 
     Do i =  1, model_data%config%num_atoms
       If (changed_geo(i)) Then
-        r(:)=model_data%config%atom(i)%r(:)
+        r=model_data%config%atom(i)%r
         Call check_PBC(r, model_data%config%cell, model_data%config%invcell, 1.0_wp, changed_geo(i))
         If (changed_geo(i)) Then
           ! Once again. If any atom is now moved, there is an inconsistency
@@ -1869,8 +1884,8 @@ Contains
 
     Do i = 1, model_data%config%num_atoms-1
       Do j = i+1, model_data%config%num_atoms
-        a(:)=model_data%config%atom(i)%r(:)
-        b(:)=model_data%config%atom(j)%r(:)
+        a=model_data%config%atom(i)%r
+        b=model_data%config%atom(j)%r
         Call compute_distance_PBC(a, b, model_data%config%cell, model_data%config%invcell, dist)
         a(:)=r0(i,:)
         b(:)=r0(j,:)
@@ -1959,40 +1974,41 @@ Contains
 
     Real(Kind=wp) :: v_direct(3), limit1, limit2
     Integer(Kind=wi) :: ir, i
-    Logical          :: flag
+    Logical          :: flag, flag2
 
-    changed_geo=.False.
- 
     If (Abs(ratio-0.5_wp) < epsilon(ratio)) Then
       limit1=ratio
       limit2=-ratio
     Else If (Abs(ratio-1.0_wp) < epsilon(ratio)) Then
-      limit1=ratio+length_tol
-      limit2=-length_tol
+      limit1=ratio !+length_tol
+      limit2=0.0_wp !-length_tol
     End If
 
     ! Express vector difference in terms of the cell vectors
-    v_direct= MatMul(v_cart, inv_basis)
+    v_direct(1:3)= MatMul(v_cart(1:3), inv_basis(1:3,1:3))
 
     ! PCB effect
     i=1
     flag=.True.
-    Do While (i < 4 .And. flag)
+    changed_geo=.False.
+    Do While (i< 4 .And. flag)
+      flag2=.False.
       Do ir = 1, 3
         If (v_direct(ir) > limit1) Then
            v_cart(:)= v_cart(:) - basis(ir,:)
            changed_geo=.True.
+           flag2=.True.
         Else If (v_direct(ir) < limit2) Then
            v_cart(:)= v_cart(:) + basis(ir,:)
            changed_geo=.True.
-        End If
-        If (changed_geo) Then
-          v_direct= MatMul(v_cart, inv_basis)
+           flag2=.True.
         End If
       End Do
-      If (.Not. changed_geo) Then
-        flag=.False.      
-      End If        
+      If (flag2) Then
+        v_direct(1:3)= MatMul(v_cart(1:3), inv_basis(1:3,1:3))
+      Else
+        flag=.False.
+      End If
       i=i+1
     End Do
 
