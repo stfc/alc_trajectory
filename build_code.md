@@ -4,12 +4,12 @@ The following notes describe the steps to build **ALC_TRAJECTORY** using the [**
 ## Software required
 The user must have access to the following software (locally):
 
-* GNU-Fortran (7.2.0) or Intel-Fortran (ifort 16.0.1; ifx 2024.0.0)
-* Cmake (3.10.2)  
-* Make (3.82)  
-* Git (2.25.1)  
+* GNU-Fortran (11.4.0) or Intel-Fortran (ifx 2025.1.1)
+* Cmake (3.16)
+* Make (4.2.1)
+* Git (2.34.1)
 
-Information in parenthesis indicates the minimum version tested during the development of the code. The specification for the minimum versions is not fully rigorous but indicative, as there could be combinations of other minimum versions that still work. Our tests indicate that versions of Intel compiler older than 16.0.1 exhibit problems and should be avoided.
+Information in parenthesis indicates the minimum version tested during the development of the code. The specification for the minimum versions is not fully rigorous but indicative, as there could be combinations of other minimum versions that still work. 
 
 ## Building the code
 We assume the code has been downloaded to folder ***alc_trajectory*** at the location */home/username/codes*, in the remote machine *wherever* of the account *"username"*. Please refer to file [README.md](./README.md) for instructions to download the code.
@@ -21,7 +21,7 @@ username@wherever:/home/username/codes/alc_trajectory$ mkdir build-gnu-debug
 username@wherever:/home/username/codes/alc_trajectory$ cd build-gnu-debug
 username@wherever:/home/username/codes/alc_trajectory/build-gnu-debug$ FC=gfortran cmake ../ -DCMAKE_BUILD_TYPE=Debug
 ```
-For the successful execution of the last step, the user must ensure to have access to the minimum version of the required software, as per specification above. In case the user opts to utilise the Inter compiler, *FC=ifort* (or *FC=ifx*) must be set instead. If successful, the user will identify the following files:
+For the successful execution of the last step, the user must ensure to have access to the minimum version of the required software, as per specification above. In case the user opts to utilise the Inter compiler, *FC=ifx* must be set instead. If successful, the user will identify the following files:
 
 CMakeCache.txt &nbsp; ***CMakeFiles*** &nbsp; Makefile &nbsp; ***bin*** &nbsp; cmake_install.cmake &nbsp; ***modules***
 
@@ -40,8 +40,6 @@ Inside folder **tools**, the user will find the following shell files (sh-files)
 
 * gnu-build-debug.sh: *Debug* option with *gFortran*. Generated folder is ***build-gnu-debug***.
 * gnu-build.sh: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Release* option with *gFortran*. Generated folder is ***build-gnu***.
-* ifort-build-debug.sh: *Debug* option with *ifort*. Generated folder is ***build-ifort-debug***.
-* ifort-build.sh:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *Release* option with *ifort*. Generated folder is ***build-ifort***.
 * ifx-build-debug.sh: *Debug* option with *ifx*. Generated folder is ***build-ifx-debug***.
 * ifx-build.sh:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *Release* option with *ifx*. Generated folder is ***build-ifx***.
 
@@ -61,9 +59,6 @@ username@wherever:/home/username/codes/alc_trajectory$ sh tools/gnu-build-debug.
 ```
 which builds and compiles the code within folder ***build-gnu-debug***.
 
-### Compilation flags
-Based on the refactoring work for the DL_POLY code, we have defined compilation flags, which depend on the Fortran compiler (*GNU-Fortran* and *Intel-Frotran*) and the option (*Release* or *Debug*). Specifications are set in the *flags.cmake* file within the ***cmake*** folder.
-
 #### GNU-Fortran compiler
 If the compiler is GNU-Fortran, the pre-defined compilation flags for the *Release* options are:
 ```sh
@@ -78,13 +73,13 @@ for *gFortran* versions older than 6.5. If the compiler version is 7.0 or newer,
 
 #### Intel-Fortran compiler
 
-For *Intel-Fortran* compiler (ifort or ifx), the pre-defined flags for option *Debug* are:
+For *Intel-Fortran* compiler (ifx), the pre-defined flags for option *Debug* are:
 ```sh
 "-g -O0 -stand f08 -traceback -C -check all,nouninit -ftrapuv -init=snan -init=arrays"
 ```
 whereas for the *Release* option, we have defined:
 ```sh
-"-O3 -C -check nouninit"
+"-Ofast"
 ```
 ## Testing the code
 ### Building manually including the testing infrastructure
@@ -191,8 +186,6 @@ Inside folder ***tools***, the user will find the following sh-files that automa
 
 * gnu-test-debug.sh: Building and compilation with the *Debug* option using *gFortran*. Tests run with ctest. Generated folder is ***test-gnu-debug***.
 * gnu-test.sh: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Building and compilation with the *Release* option using *gFortran*. Tests run with ctest. Generated folder is ***test-gnu***.
-* ifort-test-debug.sh: Building and compilation with the *Debug* option using *ifort*. Tests run with ctest. Generated folder is ***test-ifort-debug***.
-* ifort-test.sh:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Building and compilation with the *Release* option using *ifort*. Tests run with ctest. Generated folder is ***test-ifort***.
 * ifx-test-debug.sh: Building and compilation with the *Debug* option using *ifx*. Tests run with ctest. Generated folder is ***test-ifx-debug***.
 * ifx-test.sh:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Building and compilation with the *Release* option using *ifx*. Tests run with ctest. Generated folder is ***test-ifx***.
 

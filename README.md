@@ -22,16 +22,12 @@ In the root folder, the user will find several Markdown files, which are intende
 The ALC does not fully guarantee the code is free of errors and assumes no legal responsibility for any incorrect outcome or loss of data.
 
 ## Contributors
-### Original author
-Ivan Scivetti (SCD, STFC)
-### Scientific and project support
-Gilberto Teobaldi (SCD, STFC)
-
+Ivan Scivetti (author)  
+Gilberto Teobaldi (project support)  
 ## Structure of files and folders
-ALC_TRAJECTORY contains the following relevant set of files and folders (in italic-bold):
+ALC_TRAJECTORY contains the following set of files and folders (in italic-bold):
 
-* [***CI-tests***](./CI-tests): contains the tests files (in .tar format) needed for CI purposes. The user should execute the available scripts of the [***tools***](./tools) folder to run the test automatically and verify the code has been installed properly (see the [cmake_building.md](./cmake_building.md) file for instructions).
-* [***cmake***](./cmake): contains the specification for the compilation flags depending on the Fortran compiler and version, including options for debugging.
+* [***CI-tests***](./CI-tests): contains the tests files (in .tar format) needed for CI purposes. The user should execute the available scripts of the [***tools***](./tools) folder to run the test automatically and verify the code has been installed properly (see the [build_code](./build_code) file for instructions).
 * [***examples***](./examples): example cases to help the user to become familiarised with the code. The SETTINGS files are described in detail.  
 * [***scripts***](./scripts): contains scripts for data processing.
 * [***source***](./source): contains the source code. Files have the *.F90* extension
@@ -40,16 +36,16 @@ ALC_TRAJECTORY contains the following relevant set of files and folders (in ital
 * Jenkinsfile: file with specifications to build and run the testing infrastructure.
 * [LICENSE](./LICENSE): BSD 3-Clause License for ALC_TRAJECTORY. 
 * README.md: this file.
-* [cmake_building.md](./cmake_building.md): steps to build, compile and run tests using the CMake platform.
+* [build_code.md](./build_code.md): steps to build, compile and run tests using the CMake platform.
 * [use_code.md](./use_code.md): provides instructions for use together with a detailed description of the implemented capabilities. 
 
 ## Dependencies
 The user must have access to the following software (locally):
 
-* GNU-Fortran (7.2.0) or Intel-Fortran (ifort 16.0.1; ifx 2024.0.0)
-* Cmake (3.10.2)
-* Make (3.82)
-* git (2.25.1)
+* GNU-Fortran (11.4.0) or Intel-Fortran (ifx 2025.1.1)
+* Cmake (3.10.6)
+* Make (4.2.1)
+* Git (2.34.1)
 
 Information in parenthesis indicates the minimum version tested during the development of the code. The specification for the minimum versions is not fully rigorous but indicative, as there could be combinations of other minimum versions that still work. Our tests indicate that versions of Intel compiler older than 16.0.1 exhibit problems and should be avoided.
 
@@ -63,7 +59,7 @@ $ git clone git@github.com:stfc/alc_trajectory.git
 which generate the ***alc_trajectory*** folder as the root directory. Alternatively, the code can be downloaded from any of the available assets.
 
 ### Building and testing the code with CMake
-Details can be found in file [cmake_building.md](./cmake_building.md)
+Details can be found in file [build_code.md](./build_code.md)
 
 ### Making use of the software
 Once the code has been installed and tested, the user should create a folder where to run the code from. In such folder, the MD trajectory must be copied to the TRAJECTORY file. The user also needs to provide the SETTINGS file with instructions for the type of analysis to execute. Instructions of the implemented capabilities can be found in the [use_code.md](./use_code.md) file. The SETTINGS files in folder [***examples***](./examples) offer explanatory templates, which are intended to help new users in the setting of input directives for execution. In each of the directories, the user will also find the corresponding TRAJECTORY files.
