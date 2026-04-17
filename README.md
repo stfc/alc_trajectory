@@ -3,7 +3,7 @@ Funding support for full-time development is not longer available. Code developm
 Alternatively, you can contact the Ada Lovelace Centre (ALC) via the [website](https://adalovelacecentre.ac.uk/contact-us/) or via email (alc@stfc.ac.uk).
 
 ## About the code
-**ALC_TRAJECTORY** offers an open-source tool to extract orientational anisotropies and transfer correlations from Molecular Dynamics (MD) simulations of reactive systems. By "reactive" we refer to systems in gas and condensed phase where the constituent atomic species change their chemistry composition along the trajectory, forming and breaking bonds, as it occurs in anion [\[1]\](https://pubs.acs.org/doi/10.1021/acs.jpcc.8b10298) and proton exchange membranes [\[2]\](https://pubs.acs.org/doi/10.1021/acs.jpclett.1c04071?ref=PDF), for example. The implemented capabilities allow computing: 
+**ALC_TRAJECTORY** offers an open-source tool to extract orientational anisotropies and transfer correlations from Molecular Dynamics (MD) simulations of reactive systems. By "reactive" we refer to systems in gas and condensed phase where the constituent atomic species change their chemistry composition along the trajectory, forming and breaking bonds, as it occurs in anion [[1]](https://pubs.acs.org/doi/10.1021/acs.jpcc.8b10298) and proton exchange membranes [[2]](https://pubs.acs.org/doi/10.1021/acs.jpclett.1c04071?ref=PDF), for example. The implemented capabilities allow computing: 
 
 * the location of the changing chemical species along the trajectory,
 * residence times, 

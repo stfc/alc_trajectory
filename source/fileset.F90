@@ -225,14 +225,14 @@ Contains
     Write (header(14), fmt1)  Repeat("#", 74)
     Call info(header, 14)
     
-    ! Refresh OUT_EQCM
+    ! Refresh OUTPUT
     Call refresh_out(files)
 
   End Subroutine print_header_out
 
   Subroutine wrapping_up(files)
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  ! Subroutine to print final remarks to OUT_EQCM file 
+  ! Subroutine to print final remarks to OUTPUT file 
   ! and close the file 
   !  
   ! author    - i.scivetti July 2020
