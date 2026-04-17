@@ -43,7 +43,7 @@ Contains
 
   Subroutine info(message, n)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to print messages to OUT_EQCM file
+    ! Subroutine to print messages to OUTPUT file
     !
     ! author    - i.scivetti June 2020 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

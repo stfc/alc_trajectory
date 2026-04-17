@@ -1,11 +1,11 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-! Subroutines to perform various different operations with strings
+! Subroutines to perform various different operations with data
 !
-! Copyright   2023-2024 Ada Lovelace Centre (ALC)
+! Copyright   2023-2026 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
-! author      - i.scivetti  Feb 2023
+! Author      - i.scivetti  Feb 2023
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 Module process_data 
@@ -25,14 +25,17 @@ Module process_data
             detect_rubbish,        & 
             get_word_length,       &
             remove_symbols,        &
-            remove_front_tabs
+            remove_front_tabs,     &
+            set_read_status,       &
+            prevent_segmentation,  &
+            check_end
 Contains
 
   Subroutine get_word_length(word,length)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Obtain the numer of characters in a string
     ! 
-    ! author  - i.scivetti June 2020
+    ! author  - i.scivetti Feb 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(In   ) :: word
     Integer(Kind=wi), Intent(  Out) :: length
@@ -67,7 +70,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Transform string from capital to lower case 
     ! 
-    ! author  - i.scivetti June 2020
+    ! author  - i.scivetti June 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(InOut) :: string
 
@@ -90,8 +93,8 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Eliminates from string any of the symbols of array list
     ! 
-    ! author  - i.scivetti June 2020
-    ! refact  - i.scivetti July 2021
+    ! author  - i.scivetti June 2023
+    ! refact  - i.scivetti July 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(InOut) :: string
     Character(Len=*), Intent(In   ) :: list
@@ -117,8 +120,8 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Finds if any of the characters of array list is present in string
     !
-    ! author  - i.scivetti June 2020
-    ! refact  - i.scivetti July 2021
+    ! author  - i.scivetti June 2023
+    ! refact  - i.scivetti July 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(InOut) :: string
     Character(Len=*), Intent(In   ) :: list   
@@ -143,7 +146,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Finds if there are tabs in front of the string and remove them
     !
-    ! author  - i.scivetti  Oct 2021
+    ! author  - i.scivetti  Oct 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(InOut) :: string
     
@@ -154,7 +157,7 @@ Contains
     i=1
 
     Do While (i <= Len_Trim(string) .And. (.Not. change))
-      If(string(i:i) == achar(9)) Then
+      If (string(i:i) == achar(9)) Then
         string(i:i)=' '
       Else
         change=.True.
@@ -168,7 +171,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Finds if there are "wrong" characters in the definition of sentences
     !
-    ! author  - i.scivetti December 2021
+    ! author  - i.scivetti December 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Integer,          Intent(In   ) :: iunit
     Character(Len=*), Intent(In   ) :: error
@@ -177,7 +180,6 @@ Contains
 
     Backspace iunit
     Read (iunit, Fmt='(a)') string
-    !string=Trim(Adjustl(string))
 
     Call detect_rubbish(string, error)
     Backspace iunit
@@ -188,7 +190,7 @@ Contains
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Detect wrong characters 
     !
-    ! author  - i.scivetti December 2021
+    ! author  - i.scivetti December 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Character(Len=*), Intent(In   ) :: string
     Character(Len=*), Intent(In   ) :: error
@@ -252,7 +254,118 @@ Contains
 
   End Subroutine detect_rubbish
 
+  Subroutine duplication_error(directive)
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   ! Aborts execution when duplication for
+   ! a directive is found
+   !
+   ! author - i. scivetti  Feb 2023
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Character(Len=*), Intent(In   ) :: directive
+
+    Character(Len=256)  :: message
+
+    Write (message,'(4a)') '***ERROR - Directive "', Trim(directive), '" is duplicated!'
+    Call error_stop(message)
+
+  End Subroutine duplication_error  
+
+  Subroutine set_read_status(word, io, fread, fail, string)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to:
+    !  - prevent duplication
+    !  - define input directive is read by setting fread=.True. 
+    !  - test if there was a problem with reading a directive, indicated by io/=0. This sets fail=.True.
+    !
+    ! author    - i.scivetti Feb 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Character(Len=*), Intent(In   ) :: word
+    Integer(Kind=wi), Intent(In   ) :: io
+    Logical,          Intent(  Out) :: fread 
+    Logical,          Intent(InOut) :: fail
+    Character(Len=*), Optional, Intent(InOut) :: string
+
+    If (fread) Then
+      Call duplication_error(word)
+    Else
+      fread=.True.
+      If (io /= 0) Then
+        fail=.True.
+      End If
+    End If
+
+    If (Present(string)) Then
+      Call capital_to_lower_case(string)
+    End If
+
+  End Subroutine set_read_status 
+
+  Subroutine prevent_segmentation(iunit, io, in_name, input, ref_name, reference, error)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to prevent segmentation fault in case the user wants to define
+    ! settings beyond the reference number. 
+    !
+    ! author    - i.scivetti April 2023
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Integer(Kind=wi), Intent(In   ) :: iunit
+    Integer(Kind=wi), Intent(In   ) :: io
+    Character(Len=*), Intent(In   ) :: in_name
+    Integer(Kind=wi), Intent(In   ) :: input
+    Character(Len=*), Intent(In   ) :: ref_name
+    Integer(Kind=wi), Intent(In   ) :: reference
+    Character(Len=*), Intent(In   ) :: error
+    
+    Character(Len=256) :: messages(3)
+    Character(Len=256) :: word, default
+
+    Write (messages(1),'(a,i3,a)')  Trim(error)
+    If (io == 0) Then
+      If (input>reference) Then
+        Write (word,*)    input
+        Write (default,*) reference
+        Write (messages(2),'(a)') 'Are you sure you want to consider '//Trim(Adjustl(word))//' components for&
+                                 & "'//Trim(in_name)//'"? The maximum default value is '//Trim(Adjustl(default))
+        Write (messages(3),'(a)') 'If you are sure of what you are doing, look for the parameter "'//Trim(ref_name)//&
+                                  &'" in the code, increase its value as needed and recompile.'
+        Call info(messages, 3)
+        Call error_stop(' ')
+      Else If (input < 1) Then
+        Write (messages(2),'(a)') ' The number associated with "'//Trim(in_name)//'" must be positive!'
+        Call info(messages, 2)
+        Call error_stop(' ')
+      Else
+        Backspace iunit
+      End If
+    Else
+      Write (messages(2),'(a)') 'Problems in the settings of "'//Trim(in_name)//'". Please check.'
+      Call info(messages, 2)
+      Call error_stop(' ')
+    End If
+  
+  End Subroutine prevent_segmentation
+
+   Subroutine check_end(io, string)
+     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     ! Subroutine to check if there is missing data and the end of the file
+     ! has been reached
+     !
+     ! author    - i.scivetti Feb 2023
+     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     Integer,          Intent(In   ) :: io
+     Character(Len=*), Intent(In   ) :: string
+ 
+     Character(Len=256) :: messages(2)
+ 
+     If (is_iostat_end(io)) Then
+       Call info(' ', 1)
+       Write (messages(1),'(1x,2a)') '*** ERROR in ', Trim(string)
+       Write (messages(2),'(1x,2a)') 'End of file is detected. It seems there is missing data or the block is not&
+                                   & closed properly. Please check'
+       Call info(messages, 2)
+       Call error_stop(' ')
+     End If
+ 
+   End Subroutine check_end
+ 
+  
 End module process_data
-
-
-

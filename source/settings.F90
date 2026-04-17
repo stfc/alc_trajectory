@@ -3,97 +3,85 @@
 ! - reads the SETTINGS file and defines the settings for analysis
 ! - checks correctness of defined directives
 !
-! Copyright   2023-2024 Ada Lovelace Centre (ALC)
+! Copyright   2023-2026 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
 ! Author      - i.scivetti   March 2023
+! Refact      - i.scivetti   Feb   2026
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Module settings 
 
-  Use atomic_model,      Only : model_type, &
-                                geo_param_type, & 
-                                geo_spec_type, &
-                                short_dist_type, &
-                                check_length_directive,&
-                                check_model_settings,&
-                                print_model_settings
+  Use atomic_model,      Only: model_type, &
+                               geo_param_type, & 
+                               geo_spec_type, &
+                               check_length_directive,&
+                               check_model_settings
+                               
+  Use constants,         Only: chemsymbol, & 
+                               NPTE, &
+                               max_at_species,&
+                               max_components
+                               
+  Use fileset,           Only: file_type, &
+                               FILE_SET, &  
+                               FILE_OUT, & 
+                               refresh_out
+                               
+  Use geo_stat,          Only: geo_stat_type,&
+                               read_coord_distrib, &
+                               read_selected_nn_distances, &
+                               check_coord_distrib, &
+                               check_selected_nn_distances
+                               
+  Use msd,               Only: msd_type, &
+                               read_msd, &
+                               check_msd
+                               
+  Use numprec,           Only: wi, &
+                               wp
+                               
+  Use ocf,               Only: ocf_type, &
+                               chemocf_type,&
+                               read_ocf,&
+                               check_ocf, &
+                               read_orientational_chemistry,&
+                               check_orientational_chemistry
+                               
+  Use rdf,               Only: rdf_type, &
+                               read_rdf,&
+                               check_rdf  
                                 
-  Use constants,         Only : Bohr_to_A,  &
-                                chemsymbol, & 
-                                NPTE, &
-                                max_at_species,&
-                                max_components,&
-                                max_unchanged_atoms
-                                
-  Use fileset,           Only : file_type, &
-                                FILE_SET, &  
-                                FILE_OUT, & 
-                                refresh_out
-  Use numprec,           Only : wi, &
-                                wp
-  Use process_data,      Only : capital_to_lower_case, &
-                                check_for_rubbish, &
-                                get_word_length
-  Use unit_output,       Only : error_stop,&
-                                info
-  Use trajectory,        Only : traj_type, &
-                                check_trajectory_settings
+  Use process_data,      Only: capital_to_lower_case, &
+                               check_for_rubbish, &
+                               get_word_length,&
+                               remove_symbols,&
+                               set_read_status,&
+                               prevent_segmentation,&
+                               check_end
+                              
+                              
+  Use unit_output,       Only: error_stop,&
+                               info
+                               
+  Use trajectory,        Only: traj_type, &
+                               check_trajectory_settings,&
+                               read_region,&
+                               read_track_unchanged_chemistry,&
+                               read_settings_segment_analysis
 
+  Use transfer_species,  Only: transfer_type,&
+                               read_transfer_species, &
+                               check_transfer_species
+                               
   Implicit None
   
-  Private
   Public :: read_settings, check_settings
 
 Contains
 
-  Subroutine duplication_error(directive)
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-   ! Aborts execution when duplication for
-   ! a directive is found
-   !
-   ! author - i. scivetti  Feb 2023
-   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Character(Len=*), Intent(In   ) :: directive
-
-    Character(Len=256)  :: message
-
-    Write (message,'(4a)') '***ERROR - Directive "', Trim(directive), '" is duplicated!'
-    Call error_stop(message)
-
-  End Subroutine duplication_error  
-
-  Subroutine set_read_status(word, io, fread, fail, string)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to:
-    !  - prevent duplication
-    !  - define input directive is read by setting fread=.True. 
-    !  - test if there was a problem with reading a directive, indicated by io/=0. This sets fail=.True.
-    !
-    ! author    - i.scivetti Febe 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Character(Len=*), Intent(In   ) :: word
-    Integer(Kind=wi), Intent(In   ) :: io
-    Logical,          Intent(  Out) :: fread 
-    Logical,          Intent(InOut) :: fail
-    Character(Len=*), Optional, Intent(InOut) :: string
-
-    If (fread)then
-      Call duplication_error(word)
-    Else
-      fread=.True.
-      If (io /= 0) Then
-        fail=.True.
-      End If
-    End If
-
-    If (Present(string)) then
-      Call capital_to_lower_case(string)
-    End If
-
-  End Subroutine set_read_status 
-
-  Subroutine read_settings(files, model_data, traj_data)
+  Subroutine read_settings(files, model_data, traj_data, ocf_data, chemocf_data, msd_data, rdf_data, &
+                         & transfer_data, geo_stat_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to read settings from SETTINGS file.
     ! Lines starting with # are ignored and assumed as comments. 
@@ -104,9 +92,15 @@ Contains
     ! 
     ! author        - i.scivetti Feb 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Type(file_type),    Intent(InOut) :: files(:)
-    Type(model_type),   Intent(InOut) :: model_data 
-    Type(traj_type),    Intent(InOut) :: traj_data 
+    Type(file_type),      Intent(InOut) :: files(:)
+    Type(model_type),     Intent(InOut) :: model_data 
+    Type(traj_type),      Intent(InOut) :: traj_data 
+    Type(ocf_type),       Intent(InOut) :: ocf_data
+    Type(chemocf_type),   Intent(InOut) :: chemocf_data
+    Type(msd_type),       Intent(InOut) :: msd_data
+    Type(rdf_type),       Intent(InOut) :: rdf_data
+    Type(transfer_type),  Intent(InOut) :: transfer_data
+    Type(geo_stat_type),  Intent(InOut) :: geo_stat_data
  
     Logical            :: safe
     Character(Len=256) :: word
@@ -208,7 +202,7 @@ Contains
       Else If (word(1:length) == '&data_analysis') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%analysis%invoke%type
         Call set_read_status(word, io, traj_data%analysis%invoke%fread, traj_data%analysis%invoke%fail)
-        Call read_settings_for_analysis(iunit, traj_data)
+        Call read_settings_segment_analysis(iunit, traj_data)
         
       Else If (word(1:length) == 'print_retagged_trajectory') Then
        Read (iunit, Fmt=*, iostat=io) word, traj_data%print_retagged_trajectory%stat
@@ -221,10 +215,10 @@ Contains
         Call read_monitored_species(iunit, model_data)
 
       Else If (word(1:length) == '&ocf') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%ocf%invoke%type
-        Call set_read_status(word, io, traj_data%ocf%invoke%fread, traj_data%ocf%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) ocf_data%invoke%type
+        Call set_read_status(word, io, ocf_data%invoke%fread, ocf_data%invoke%fail)
         !Read information inside the block
-        Call read_ocf(iunit, traj_data)
+        Call read_ocf(iunit, ocf_data)
 
       Else If (word(1:length) == '&region') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%region%define%type
@@ -233,28 +227,28 @@ Contains
         Call read_region(iunit, traj_data)
 
       Else If (word(1:length) == '&msd') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%msd%invoke%type
-        Call set_read_status(word, io, traj_data%msd%invoke%fread, traj_data%msd%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) msd_data%invoke%type
+        Call set_read_status(word, io, msd_data%invoke%fread, msd_data%invoke%fail)
         !Read information inside the block
-        Call read_msd(iunit, traj_data)
+        Call read_msd(iunit, msd_data)
 
       Else If (word(1:length) == '&selected_nn_distances') Then
-        Read (iunit, Fmt=*, iostat=io) model_data%nndist%invoke%type
-        Call set_read_status(word, io, model_data%nndist%invoke%fread, model_data%nndist%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) geo_stat_data%nndist%invoke%type
+        Call set_read_status(word, io, geo_stat_data%nndist%invoke%fread, geo_stat_data%nndist%invoke%fail)
         !Read information inside the block
-        Call read_selected_nn_distances(iunit, model_data%nndist)
+        Call read_selected_nn_distances(iunit, geo_stat_data)
 
       Else If (word(1:length) == '&rdf') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%rdf%invoke%type
-        Call set_read_status(word, io, traj_data%rdf%invoke%fread, traj_data%rdf%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) rdf_data%invoke%type
+        Call set_read_status(word, io, rdf_data%invoke%fread, rdf_data%invoke%fail)
         !Read information inside the block
-        Call read_rdf(iunit, traj_data)
+        Call read_rdf(iunit, rdf_data)
 
       Else If (word(1:length) == '&coord_distrib') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%invoke%type
-        Call set_read_status(word, io, traj_data%coord_distrib%invoke%fread, traj_data%coord_distrib%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) geo_stat_data%coord_distr%invoke%type
+        Call set_read_status(word, io, geo_stat_data%coord_distr%invoke%fread, geo_stat_data%coord_distr%invoke%fail)
         !Read information inside the block
-        Call read_coord_distrib(iunit, traj_data)
+        Call read_coord_distrib(iunit, geo_stat_data)
 
       Else If (word(1:length) == '&track_unchanged_chemistry') Then
         Read (iunit, Fmt=*, iostat=io) traj_data%unchanged%invoke%type
@@ -263,16 +257,16 @@ Contains
         Call read_track_unchanged_chemistry(iunit, traj_data)
         
       Else If (word(1:length) == '&lifetime') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%lifetime%invoke%type
-        Call set_read_status(word, io, traj_data%lifetime%invoke%fread, traj_data%lifetime%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) transfer_data%invoke%type
+        Call set_read_status(word, io, transfer_data%invoke%fread, transfer_data%invoke%fail)
         !Read information inside the block
-        Call read_lifetime(iunit, traj_data)
+        Call read_transfer_species(iunit, transfer_data)
 
       Else If (word(1:length) == '&orientational_chemistry') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%chem_ocf%invoke%type
-        Call set_read_status(word, io, traj_data%chem_ocf%invoke%fread, traj_data%chem_ocf%invoke%fail)
+        Read (iunit, Fmt=*, iostat=io) chemocf_data%invoke%type
+        Call set_read_status(word, io, chemocf_data%invoke%fread, chemocf_data%invoke%fail)
         !Read information inside the block
-        Call read_orientational_chemistry(iunit, traj_data)
+        Call read_orientational_chemistry(iunit, chemocf_data)
 
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
       ! Directive not recognised. Inform and kill 
@@ -294,29 +288,6 @@ Contains
     Close(files(FILE_SET)%unit_no)
 
   End Subroutine read_settings
-
-   Subroutine check_end(io, string)
-     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-     ! Subroutine to check if there is missing data and the end of the file
-     ! has been reached
-     !
-     ! author    - i.scivetti Dec 2021
-     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-     Integer,          Intent(In   ) :: io
-     Character(Len=*), Intent(In   ) :: string
- 
-     Character(Len=256) :: messages(2)
- 
-     If (is_iostat_end(io))Then
-       Call info(' ', 1)
-       Write (messages(1),'(1x,2a)') '*** ERROR in ', Trim(string)
-       Write (messages(2),'(1x,2a)') 'End of file is detected. It seems there is missing data or the block is not&
-                                   & closed properly. Please check'
-       Call info(messages, 2)
-       Call error_stop(' ')
-     End If
- 
-   End Subroutine check_end
 
   Subroutine read_input_cell(iunit, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -846,7 +817,6 @@ Contains
   
   End Subroutine read_geom_param_monitored_species
   
-  
   Subroutine read_geom_param(iunit, inblock, M)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to read distance and angle settings
@@ -919,79 +889,6 @@ Contains
   
   End Subroutine read_geom_param
 
-  Subroutine read_selected_nn_distances(iunit, M)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read parameters from the
-    ! &selected_nn_distances block
-    !
-    ! author    - i.scivetti Nov 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),      Intent(In   ) :: iunit
-    Type(short_dist_type), Intent(InOut) :: M 
-    
-    Integer(Kind=wi)   :: io, length, i
-    Character(Len=256) :: message, word
-    Character(Len=256) :: messages(2)
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in "&selected_nn_distances" block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
-                                  & Use "&end_selected_nn_distances" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_selected_nn_distances') Exit
-      Call check_for_rubbish(iunit, '&end_selected_nn_distances')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
- 
-      Else If (Trim(word)=='reference_species') Then
-        Read (iunit, Fmt=*, iostat=io) M%tag_reference_species%type, M%reference_species
-        Call set_read_status(word, io, M%tag_reference_species%fread, M%tag_reference_species%fail, M%tag_reference_species%type)
-
-      Else If (Trim(word)=='nn_species') Then
-        Read (iunit, Fmt=*, iostat=io) M%tag_nn_species%type, M%num_nn_species
-        Call prevent_segmentation(iunit, io, M%tag_nn_species%type, M%num_nn_species,&
-                                & 'max_components', max_components, set_error)
-        M%nn_species=' '
-        Read (iunit, Fmt=*, iostat=io) M%tag_nn_species%type, M%num_nn_species, (M%nn_species(i), i=1, M%num_nn_species) 
-        Call set_read_status(word, io, M%tag_nn_species%fread, M%tag_nn_species%fail, M%tag_nn_species%type)
-        
-      Else If (Trim(word)=='lower_bound') Then
-         Read (iunit, Fmt=*, iostat=io) M%lower_bound%tag, M%lower_bound%value, M%lower_bound%units 
-         Call set_read_status(word, io, M%lower_bound%fread, M%lower_bound%fail)
-
-      Else If (Trim(word)=='upper_bound') Then
-         Read (iunit, Fmt=*, iostat=io) M%upper_bound%tag, M%upper_bound%value, M%upper_bound%units 
-         Call set_read_status(word, io, M%upper_bound%fread, M%upper_bound%fail)
-
-      Else If (Trim(word)=='dr') Then
-         Read (iunit, Fmt=*, iostat=io) M%dr%tag, M%dr%value, M%dr%units 
-         Call set_read_status(word, io, M%dr%fread, M%dr%fail)
-
-      Else
-        Write (messages(1),'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.'
-        Write (messages(2),'(1x,a)') 'Have you properly closed the block with "&end_selected_nn_distances"? &
-                                & Have you defined the directives correctly? See the "use_code.md" file'
-        Call info (messages, 2)
-        Call error_stop(' ')
-      End If
-    End Do
-  
-  End Subroutine read_selected_nn_distances
-  
-  
   Subroutine read_components_monitored_species(iunit, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to extra bond settings
@@ -1102,684 +999,7 @@ Contains
     End Do
     
   End Subroutine read_components_monitored_species
-
-  Subroutine read_region(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the &region block. This block defines the portion of the
-    ! system to be analysed.
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),  Intent(In   ) :: iunit
-    Type(traj_type), Intent(InOut)  :: traj_data 
-
-    Integer(Kind=wi)   :: io, length, k
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &region block (SETTINGS file).'
  
-    traj_data%region%number=0
-    
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_region" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_region') Exit
-      Call check_for_rubbish(iunit, '&region')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='delta_x') Then
-        traj_data%region%number(1)=traj_data%region%number(1)+1
-        k=traj_data%region%number(1)
-        Read (iunit, Fmt=*, iostat=io) traj_data%region%invoke(1,k)%type, &
-                                    & traj_data%region%domain(1,1,k),     &
-                                    & traj_data%region%domain(1,2,k),     &
-                                    & traj_data%region%inout(1,k)
-        Call set_read_status(word, io, traj_data%region%invoke(1,k)%fread, &
-                            & traj_data%region%invoke(1,k)%fail, traj_data%region%invoke(1,k)%type)
-         
-      Else If (Trim(word)=='delta_y') Then
-        traj_data%region%number(2)=traj_data%region%number(2)+1
-        k=traj_data%region%number(2)
-        Read (iunit, Fmt=*, iostat=io) traj_data%region%invoke(2,k)%type, &
-                                    & traj_data%region%domain(2,1,k),     &
-                                    & traj_data%region%domain(2,2,k),     &
-                                    & traj_data%region%inout(2,k)
-        Call set_read_status(word, io, traj_data%region%invoke(2,k)%fread, &
-                            & traj_data%region%invoke(2,k)%fail, traj_data%region%invoke(2,k)%type)
-
-      Else If (Trim(word)=='delta_z') Then
-        traj_data%region%number(3)=traj_data%region%number(3)+1
-        k=traj_data%region%number(3)
-        Read (iunit, Fmt=*, iostat=io) traj_data%region%invoke(3,k)%type, &
-                                    & traj_data%region%domain(3,1,k),     &
-                                    & traj_data%region%domain(3,2,k),     &
-                                    & traj_data%region%inout(3,k)
-        Call set_read_status(word, io, traj_data%region%invoke(3,k)%fread, &
-                            & traj_data%region%invoke(3,k)%fail, traj_data%region%invoke(3,k)%type)
-
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_region"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-    ! Assing to 1 if not read
-    Do k = 1, 3
-      If (traj_data%region%number(k)==0) Then
-        traj_data%region%number(k)=1
-      End If
-    End Do
-    
-  End Subroutine read_region
-
-  Subroutine read_track_unchanged_chemistry(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the settings to track chemically unchanged species 
-    ! along the trajectory
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi), Intent(In   ) :: iunit
-    Type(traj_type),  Intent(InOut) :: traj_data 
-
-    Integer(Kind=wi)   :: io, length, j
-    Character(Len=256) :: message, messages(2)
-    Character(Len=256) :: word
-    Character(Len=256) :: set_error
-    Logical :: error, fread
-    
-    set_error = '***ERROR in the &track_unchanged_chemistry block (SETTINGS file).'
-    error=.False.
-    fread= .True.
-
-    Do While (fread)
-      Read (iunit, Fmt=*, iostat=io) word
-      Call check_end(io, '&track_unchanged_chemistry')
-      If (word(1:1)/='#') Then
-        fread=.False.
-        Call check_for_rubbish(iunit, '&track_unchanged_chemistry')
-      End If
-    End Do
-
-    ! Read number of extra bonds
-    Read (iunit, Fmt=*, iostat=io) word, traj_data%unchanged%N0
-    If (Trim(word) /= 'number') Then
-      Write (messages(2),'(3a)') 'Directive "', Trim(word), &
-                         & '" has been found, but directive "number" is expected to be defined first'
-      error=.True.
-    End If 
-
-    If (io /= 0) Then
-      Write (messages(2),'(a)') 'Wrong (or missing) specification for directive "number"'
-      error=.True.
-    Else
-      If (traj_data%unchanged%N0<1) Then
-        Write (messages(2),'(a)') 'The "number" directive MUST BE >= 1'
-        error=.True.
-      End If  
-      If (traj_data%unchanged%N0>max_components) Then
-        Write (messages(2),'(a,i3,a)') 'Directive number: are you sure you want to consider more than ', max_components,&
-                                    & '? Please check'
-        error=.True.
-      End If
-      If (traj_data%unchanged%N0>max_unchanged_atoms) Then
-        Write (messages(2),'(a,i3,a)') 'Directive "number": the user cannot track more than ', max_unchanged_atoms,&
-                                       &' per simulation. In case a larger number is needed, run the code several times'
-        error=.True.
-      End If
-    End If
-    ! print erro if any
-    If (error) Then
-      Call info(messages,2) 
-      Call error_stop(' ')
-    End If
-    
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_track_unchanged_chemistry" to close the block.&
-                                  & Check if directives "tag" and "list_indexes" are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_track_unchanged_chemistry') Exit
-      Call check_for_rubbish(iunit, '&track_unchanged_chemistry')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='list_indexes') Then
-        traj_data%unchanged%indexes=-1
-        Read (iunit, Fmt=*, iostat=io) traj_data%unchanged%list_indexes%type,&
-                                       (traj_data%unchanged%indexes(j), j= 1, traj_data%unchanged%N0)
-        Call set_read_status(word, io, traj_data%unchanged%list_indexes%fread, traj_data%unchanged%list_indexes%fail,&
-                                     & traj_data%unchanged%list_indexes%type)
-
-      Else If (Trim(word)=='tag') Then
-         Read (iunit, Fmt=*, iostat=io) word, traj_data%unchanged%tag%type 
-         Call set_read_status(word, io, traj_data%unchanged%tag%fread, traj_data%unchanged%tag%fail)
-
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with&
-                                & "&end_track_unchanged_chemistry"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_track_unchanged_chemistry
-  
-  Subroutine read_settings_for_analysis(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the time settings from the &data_analysis block
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi), Intent(In   ) :: iunit
-    Type(traj_type),  Intent(InOut) :: traj_data 
-
-    Integer(Kind=wi)   :: io, length
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &data_analysis block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_data_analysis" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_data_analysis') Exit
-      Call check_for_rubbish(iunit, '&data_analysis')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='time_interval') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%time_interval%tag, &
-                                      & traj_data%analysis%time_interval%value,& 
-                                      & traj_data%analysis%time_interval%units
-        Call set_read_status(word, io, traj_data%analysis%time_interval%fread,&
-                                      & traj_data%analysis%time_interval%fail)
-
-      Else If (Trim(word)=='end_time') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%end_time%tag, &
-                                      & traj_data%analysis%end_time%value,& 
-                                      & traj_data%analysis%end_time%units
-        Call set_read_status(word, io, traj_data%analysis%end_time%fread,&
-                                      & traj_data%analysis%end_time%fail)                                      
-                                      
-      Else If (Trim(word)=='ignore_initial') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%ignore_initial%tag, &
-                                      & traj_data%analysis%ignore_initial%value,& 
-                                      & traj_data%analysis%ignore_initial%units
-        Call set_read_status(word, io, traj_data%analysis%ignore_initial%fread,&
-                                      & traj_data%analysis%ignore_initial%fail)
-
-      Else If (Trim(word)=='overlap_time') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%analysis%overlap_time%tag, &
-                                      & traj_data%analysis%overlap_time%value,& 
-                                      & traj_data%analysis%overlap_time%units
-        Call set_read_status(word, io, traj_data%analysis%overlap_time%fread,&
-                                      & traj_data%analysis%overlap_time%fail)
-
-      Else If (word(1:length) == 'normalise_at_t0') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%analysis%normalise_at_t0%stat
-       Call set_read_status(word, io, traj_data%analysis%normalise_at_t0%fread, traj_data%analysis%normalise_at_t0%fail)
-                                      
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_data_analysis"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_settings_for_analysis
-  
-  Subroutine read_rdf(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the settigns for Radial Distribution Function (RDF)
-    ! analysis from the &RDF block
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi), Intent(In   ) :: iunit
-    Type(traj_type),  Intent(InOut) :: traj_data 
-
-    Integer(Kind=wi)   :: io, length, j
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &RDF block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_rdf" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_rdf') Exit
-      Call check_for_rubbish(iunit, '&rdf')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='tags_species_a') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%rdf%tags_species_a%type, traj_data%rdf%num_type_a
-        Call prevent_segmentation(iunit, io, traj_data%rdf%tags_species_a%type, traj_data%rdf%num_type_a,&
-                                & 'max_components', max_components, set_error)
-        traj_data%rdf%type_a=' '
-        Read (iunit, Fmt=*, iostat=io) traj_data%rdf%tags_species_a%type, traj_data%rdf%num_type_a,&
-                                       (traj_data%rdf%type_a(j), j= 1, traj_data%rdf%num_type_a)
-        Call set_read_status(word, io, traj_data%rdf%tags_species_a%fread, traj_data%rdf%tags_species_a%fail,&
-                           & traj_data%rdf%tags_species_a%type)
-
-      Else If (Trim(word)=='tags_species_b') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%rdf%tags_species_b%type, traj_data%rdf%num_type_b
-        Call prevent_segmentation(iunit, io, traj_data%rdf%tags_species_b%type, traj_data%rdf%num_type_b,&
-                                & 'max_components', max_components, set_error)
-        traj_data%rdf%type_b=' '
-        Read (iunit, Fmt=*, iostat=io) traj_data%rdf%tags_species_b%type, traj_data%rdf%num_type_b,&
-                                       (traj_data%rdf%type_b(j), j= 1, traj_data%rdf%num_type_b)
-        Call set_read_status(word, io, traj_data%rdf%tags_species_b%fread, traj_data%rdf%tags_species_b%fail,&
-                           & traj_data%rdf%tags_species_b%type)
-
-      Else If (Trim(word)=='dr') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%rdf%dr%tag, traj_data%rdf%dr%value, traj_data%rdf%dr%units 
-         Call set_read_status(word, io, traj_data%rdf%dr%fread, traj_data%rdf%dr%fail)
-
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_rdf"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_rdf
-
-  Subroutine read_coord_distrib(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the settigns for computing the coordinate distribution
-    ! of selective species. Information must be provided in the 
-    ! &coord_distrib block 
-    !
-    ! author    - i.scivetti Oct 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi), Intent(In   ) :: iunit
-    Type(traj_type),  Intent(InOut) :: traj_data 
-
-    Integer(Kind=wi)   :: io, length
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &coord_distrib block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly.&
-                                  & Use "&end_coord_distrib" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_coord_distrib') Exit
-      Call check_for_rubbish(iunit, '&coord_distrib')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='species') Then
-        Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%species_dir%type, traj_data%coord_distrib%species
-        Call set_read_status(word, io, traj_data%coord_distrib%species_dir%fread,&
-                           & traj_data%coord_distrib%species_dir%fail,traj_data%coord_distrib%species_dir%type)
-
-      Else If (Trim(word)=='delta') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%coord_distrib%delta%tag, &
-                                      & traj_data%coord_distrib%delta%value,&
-                                      & traj_data%coord_distrib%delta%units 
-         Call set_read_status(word, io, traj_data%coord_distrib%delta%fread, traj_data%coord_distrib%delta%fail)
-
-      Else If (Trim(word)=='coordinate') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%coord_distrib%coordinate%type
-        Call set_read_status(word, io, traj_data%coord_distrib%coordinate%fread,& 
-                           & traj_data%coord_distrib%coordinate%fail,&
-                           & traj_data%coord_distrib%coordinate%type)
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_coord_distrib"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_coord_distrib
-  
-  Subroutine read_msd(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the settigns for mean square displacement (MSD)
-    ! analysis from the &MSD block
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),  Intent(In   ) :: iunit
-    Type(traj_type), Intent(InOut)  :: traj_data 
-
-    Integer(Kind=wi)   :: io, length, j
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &MSD block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_msd" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_msd') Exit
-      Call check_for_rubbish(iunit, '&msd')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='select') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%msd%select%type
-        Call set_read_status(word, io, traj_data%msd%select%fread, traj_data%msd%select%fail,&
-                           & traj_data%msd%select%type)
-
-      Else If (Trim(word)=='pbc_xyz') Then
-         Read (iunit, Fmt=*, iostat=io) word, (traj_data%msd%pbc(j), j= 1, 3)
-         Call set_read_status(word, io, traj_data%msd%pbc_xyz%fread, traj_data%msd%pbc_xyz%fail)
-
-      Else If (word(1:length) == 'print_all_intervals') Then
-       Read (iunit, Fmt=*, iostat=io) word, traj_data%msd%print_all_intervals%stat
-       Call set_read_status(word, io, traj_data%msd%print_all_intervals%fread, traj_data%msd%print_all_intervals%fail)
-
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_msd"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_msd
-
-  Subroutine read_orientational_chemistry(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the information from the &orientational_chemistry block
-    !
-    ! author    - i.scivetti February 2024
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),  Intent(In   ) :: iunit
-    Type(traj_type), Intent(InOut)  :: traj_data 
-
-    Integer(Kind=wi)   :: io, length
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &orientational_chemistry block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_orientational_chemistry" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_orientational_chemistry') Exit
-      Call check_for_rubbish(iunit, '&orientational_chemistry')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='variable') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%chem_ocf%variable%type
-        Call set_read_status(word, io, traj_data%chem_ocf%variable%fread,&
-                                     & traj_data%chem_ocf%variable%fail,&
-                                     & traj_data%chem_ocf%variable%type)
-
-      Else If (word(1:length) == 'print_all_intervals') Then
-       Read (iunit, Fmt=*, iostat=io) word, traj_data%chem_ocf%print_all_intervals%stat
-       Call set_read_status(word, io, traj_data%chem_ocf%print_all_intervals%fread,&
-                         & traj_data%chem_ocf%print_all_intervals%fail)
-                            
-                                      
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings. See the "use_code.md" file.&
-                                & Have you properly closed the block with "&end_orientational_chemistry"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_orientational_chemistry
-  
-  
-  Subroutine read_lifetime(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the information from the &lifetime block
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),  Intent(In   ) :: iunit
-    Type(traj_type), Intent(InOut)  :: traj_data 
-
-    Integer(Kind=wi)   :: io, length
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &lifetime block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_lifetime" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_lifetime') Exit
-      Call check_for_rubbish(iunit, '&lifetime')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='method') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%lifetime%method%type
-        Call set_read_status(word, io, traj_data%lifetime%method%fread,&
-                                     & traj_data%lifetime%method%fail,&
-                                     & traj_data%lifetime%method%type)
-
-      Else If (Trim(word)=='rattling_wait') Then
-         Read (iunit, Fmt=*, iostat=io) traj_data%lifetime%rattling_wait%tag, &
-                                      & traj_data%lifetime%rattling_wait%value,& 
-                                      & traj_data%lifetime%rattling_wait%units
-         Call set_read_status(word, io, traj_data%lifetime%rattling_wait%fread,&
-                                      & traj_data%lifetime%rattling_wait%fail)
-
-      Else If (word(1:length) == 'print_all_intervals') Then
-       Read (iunit, Fmt=*, iostat=io) word, traj_data%lifetime%print_all_intervals%stat
-       Call set_read_status(word, io, traj_data%lifetime%print_all_intervals%fread, traj_data%lifetime%print_all_intervals%fail)
-                            
-                                      
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_lifetime"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_lifetime
-!   
-  Subroutine read_ocf(iunit, traj_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to read the information for orientational correlation function (OCF)
-    ! analysis from the &OCF block
-    !
-    ! author    - i.scivetti March 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi),  Intent(In   ) :: iunit
-    Type(traj_type), Intent(InOut)  :: traj_data 
-
-    Integer(Kind=wi)   :: io, length
-    Character(Len=256) :: message, word
-    Character(Len=256) :: set_error
-    
-    set_error = '***ERROR in the &OCF block (SETTINGS file).'
-
-    Do
-      Read (iunit, Fmt=*, iostat=io) word
-      If (io /= 0) Then
-        Write (message,'(2(1x,a))') Trim(set_error), 'It appears the block has not been closed correctly. Use&
-                                  & "&end_ocf" to close the block.&
-                                  & Check if directives are set correctly.'         
-        Call error_stop(message) 
-      End If  
-      
-      Call get_word_length(word,length)
-      Call capital_to_lower_case(word)
-      If (Trim(word)=='&end_ocf') Exit
-      Call check_for_rubbish(iunit, '&ocf')
-
-      If (word(1:1) == '#' .Or. word(1:3) == '   ') Then
-      ! Do nothing if line is a comment of we have an empty line
-      Read (iunit, Fmt=*, iostat=io) word
-
-      Else If (Trim(word)=='u_definition') Then
-        Read (iunit, Fmt=*, iostat=io) word, traj_data%ocf%u_definition%type
-        Call set_read_status(word, io, traj_data%ocf%u_definition%fread, traj_data%ocf%u_definition%fail,&
-                           & traj_data%ocf%u_definition%type)
-
-      Else If (Trim(word)=='legendre_order') Then
-         Read (iunit, Fmt=*, iostat=io) word, traj_data%ocf%legendre_order%value
-         Call set_read_status(word, io, traj_data%ocf%legendre_order%fread,&
-                            & traj_data%ocf%legendre_order%fail)
-
-      Else If (word(1:length) == 'print_all_intervals') Then
-       Read (iunit, Fmt=*, iostat=io) word, traj_data%ocf%print_all_intervals%stat
-       Call set_read_status(word, io, traj_data%ocf%print_all_intervals%fread, traj_data%ocf%print_all_intervals%fail)
-                            
-      Else
-        Write (message,'(1x,5a)') Trim(set_error), ' Directive "', Trim(word),&
-                                & '" is not recognised as a valid settings.',&
-                                & ' See the "use_code.md" file. Have you properly closed the block with "&end_ocf"?'
-        Call error_stop(message)
-      End If
-
-    End Do
-    
-  End Subroutine read_ocf
-  
-  Subroutine prevent_segmentation(iunit, io, in_name, input, ref_name, reference, error)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to prevent segmentation fault in case the user wants to define
-    ! settings beyonf the reference number. 
-    !
-    ! author    - i.scivetti April 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Integer(Kind=wi), Intent(In   ) :: iunit
-    Integer(Kind=wi), Intent(In   ) :: io
-    Character(Len=*), Intent(In   ) :: in_name
-    Integer(Kind=wi), Intent(In   ) :: input
-    Character(Len=*), Intent(In   ) :: ref_name
-    Integer(Kind=wi), Intent(In   ) :: reference
-    Character(Len=*), Intent(In   ) :: error
-    
-    Character(Len=256) :: messages(3)
-    Character(Len=256) :: word, default
-
-    Write (messages(1),'(a,i3,a)')  Trim(error)
-    If (io == 0) Then
-      If (input>reference) Then
-        Write(word,*)    input
-        Write(default,*) reference
-        Write (messages(2),'(a)') 'Are you sure you want to consider '//Trim(Adjustl(word))//' components for&
-                                 & "'//Trim(in_name)//'"? The maximum default value is '//Trim(Adjustl(default))
-        Write (messages(3),'(a)') 'If you are sure of what you are doing, look for the parameter "'//Trim(ref_name)//&
-                                  &'" in the code, increase its value as needed and recompile.'
-        Call info(messages, 3)
-        Call error_stop(' ')
-      Else If (input < 1) Then
-        Write (messages(2),'(a)') ' The number associated with "'//Trim(in_name)//'" must be positive!'
-        Call info(messages, 2)
-        Call error_stop(' ')
-      Else
-        Backspace iunit
-      End If
-    Else
-      Write (messages(2),'(a)') 'Problems in the settings of "'//Trim(in_name)//'". Please check.'
-      Call info(messages, 2)
-      Call error_stop(' ')
-    End If
-  
-  End Subroutine prevent_segmentation
-  
   Subroutine read_input_composition(iunit, model_data)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to read the amount of atoms and chemical elements for each atomic
@@ -1980,23 +1200,152 @@ Contains
  
   End Subroutine read_input_composition
 
-  Subroutine check_settings(files, model_data, traj_data) 
+  Subroutine check_settings(files, model_data, traj_data, ocf_data, chemocf_data, msd_data, rdf_data, transfer_data, geo_stat_data) 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check the correctness of the defined directive
     !
     ! author    - i.scivetti Feb 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Type(file_type),      Intent(InOut) :: files(:)
-    Type(model_type),     Intent(InOut) :: model_data 
-    Type(traj_type),      Intent(InOut) :: traj_data
+    Type(file_type),     Intent(InOut) :: files(:)
+    Type(model_type),    Intent(InOut) :: model_data 
+    Type(traj_type),     Intent(InOut) :: traj_data
+    Type(ocf_type),      Intent(InOut) :: ocf_data
+    Type(chemocf_type),  Intent(InOut) :: chemocf_data
+    Type(msd_type),      Intent(InOut) :: msd_data
+    Type(rdf_type),      Intent(InOut) :: rdf_data
+    Type(transfer_type), Intent(InOut) :: transfer_data
+    Type(geo_stat_type), Intent(InOut) :: geo_stat_data
  
     Call check_model_settings(files, model_data)
-    Call check_trajectory_settings(files, traj_data, model_data)    
-    ! Print model related settings
-    Call print_model_settings(files, model_data)
-    Call refresh_out(files)
-
+    Call check_settings_for_trajectory_analysis(files, model_data, traj_data, ocf_data, chemocf_data, &
+                                              & msd_data, rdf_data, transfer_data, geo_stat_data)
+ 
   End Subroutine check_settings
 
+  Subroutine check_settings_for_trajectory_analysis(files, model_data, traj_data, ocf_data, chemocf_data, &
+                                                  & msd_data, rdf_data, transfer_data, geo_stat_data)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Subroutine to check the correctness of trajectory-related directives
+    !
+    ! author    - i.scivetti Jan 2026
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Type(file_type),      Intent(In   ) :: files(:)
+    Type(model_type),     Intent(In   ) :: model_data
+    Type(traj_type),      Intent(InOut) :: traj_data
+    Type(ocf_type),       Intent(InOut) :: ocf_data
+    Type(chemocf_type),   Intent(InOut) :: chemocf_data
+    Type(msd_type),       Intent(InOut) :: msd_data
+    Type(rdf_type),       Intent(InOut) :: rdf_data
+    Type(transfer_type),  Intent(InOut) :: transfer_data
+    Type(geo_stat_type),  Intent(InOut) :: geo_stat_data
+
+
+    Character(Len=256)  :: messages(2)
+    Character(Len=64 )  :: error_set
+
+    error_set = '***ERROR in file '//Trim(files(FILE_SET)%filename)//' -'
+    
+    ! Check pure trajectory related settings
+    Call check_trajectory_settings(files, model_data, traj_data) 
+
+    ! Check info &OCF block 
+    If (ocf_data%invoke%fread) Then
+      Call check_ocf(files, ocf_data)
+    End If 
+
+    ! Check info &orientational_chemistry 
+    If (chemocf_data%invoke%fread) Then
+      Call check_orientational_chemistry(files, chemocf_data)
+    End If 
+     
+    ! Check info &MSD block 
+    If (msd_data%invoke%fread) Then
+      Call check_msd(files, msd_data)
+    End If 
+
+    ! Check info &RDF block 
+    If (rdf_data%invoke%fread) Then
+      Call check_rdf(files, rdf_data, model_data)
+    End If 
+
+    ! Check info &lifetime block 
+    If (transfer_data%invoke%fread) Then
+      Call check_transfer_species(files, transfer_data)
+    End If 
+
+    ! Check info &coord_distrib block 
+    If (geo_stat_data%coord_distr%invoke%fread) Then
+      Call check_coord_distrib(files, model_data, geo_stat_data)
+    End If 
+
+    ! Check &selected_nn_distances
+    If (geo_stat_data%nndist%invoke%fread) Then
+      Call check_selected_nn_distances(files, model_data, geo_stat_data)
+    End If
+    
+    ! Extra cross checking
+    !!!!!!!!!!!!!!!!!!!!!!
+    If (Trim(model_data%input_geometry_format%type)=='xyz') Then
+      If (Trim(traj_data%ensemble%type)/='nve' .And. Trim(traj_data%ensemble%type)/='nvt') Then
+         Call info(' ', 1)
+         Write (messages(1),'(1x,a)') Trim(error_set)//' To date, trajectories in "xyz" format cannot be&
+                                    & processed in the "'//Trim(traj_data%ensemble%type)//'" ensemble&
+                                    & (this is part of future implementation).'  
+         Call info(messages,1)           
+         Call error_stop(' ')
+      End If
+    Else If (Trim(model_data%input_geometry_format%type)=='vasp') Then      
+      If (model_data%config%simulation_cell%fread) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//' Trajectories in "vasp" format contain the definition&
+                                    & of the simulation cell within the file.'
+         Write (messages(2),'(4x,a)') 'Thus, definition of the "&simulation_cell" block is not needed and can cause&
+                                    & problems. Please remove/comment "&simulation_cell".'  
+         Call info(messages, 2)           
+         Call error_stop(' ')
+      End If
+    End If
+   
+    If (ocf_data%invoke%fread) Then
+      If (.Not. model_data%config%monitored_species%fread) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//'The computation of the orientational correlation&
+                                     & function (OCF) requires the definition of the "&monitored_species" block'
+         Call info(messages,1)           
+         Call error_stop(' ')
+      Else
+        If (model_data%species_definition%atoms_per_species == 1) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//' The computation of the orientational correlation&
+                                     & function (OCF) requires that the species defined in the&
+                                     & "&monitored_species" block is a molecule. Please review the settings'
+         Call info(messages,1)           
+         Call error_stop(' ')
+        End If
+      End If
+    End If
+    
+    If (transfer_data%invoke%fread) Then
+      If (.Not. model_data%change_chemistry%stat) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//' The user has defined the &lifetime block but&
+                                     & the &search_chemistry block is missing.'
+         Write (messages(2),'(4x,a)') 'The computation of residence times and transfer correlation functions is&
+                                     & only possible for systems with changing chemical species'
+         Call info(messages, 2)           
+         Call error_stop(' ')
+      End If
+    End If
+
+    If (chemocf_data%invoke%fread) Then
+      If (.Not. model_data%change_chemistry%stat) Then
+         Write (messages(1),'(1x,a)') Trim(error_set)//' The user has defined the &orientational_chemistry block but&
+                                     & the &search_chemistry block is missing.'
+         Write (messages(2),'(4x,a)') 'The computation of the orientational chemistry is&
+                                     & only possible for systems with changing chemical species'
+         Call info(messages, 2)           
+         Call error_stop(' ')
+      End If
+    End If
+    
+    
+  End Subroutine check_settings_for_trajectory_analysis
+  
 End module settings
 

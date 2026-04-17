@@ -1,7 +1,7 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Module that reads and evaluates each atomic configuration of the trajectory
 !
-! Copyright   2023-2024 Ada Lovelace Centre (ALC)
+! Copyright   2023-2026 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
@@ -121,19 +121,6 @@ Module atomic_model
     Type(bonding)      :: bonds
   End Type 
 
-  ! Type for geometrical paremeter
-  Type, Public :: short_dist_type
-    Type(in_string)    :: invoke
-    Type(in_string)    :: tag_reference_species
-    Type(in_string)    :: tag_nn_species
-    Character(Len=8)   :: reference_species
-    Integer(Kind=wi)   :: num_nn_species
-    Character(Len=8)   :: nn_species(max_at_species)
-    Type(in_param)     :: lower_bound
-    Type(in_param)     :: upper_bound
-    Type(in_param)     :: dr 
-  End Type
-  
   ! Type for geometrical paremeter
   Type, Public :: geo_param_type
     Type(in_string)      :: invoke
@@ -259,8 +246,6 @@ Module atomic_model
     Type(spec_def_type), Public           :: species_definition
     ! Tracked species
     Type(tracking_type), Public           :: track_chem(max_components)
-    ! Shortest pair
-    Type(short_dist_type), Public         :: nndist
 
    Contains
      Private
@@ -424,7 +409,7 @@ Contains
 
     Integer(Kind=wi) :: j
     
-    If(model_data%change_chemistry%stat) Then 
+    If (model_data%change_chemistry%stat) Then 
       ! Reset the condition to search search and identify sites 
       model_data%config%atom(:)%identified=.False.
       model_data%config%atom(:)%Nbonds=0
@@ -467,7 +452,7 @@ Contains
     
     Do j = 1, model_data%config%Nmax_species
       k = model_data%config%species(j)%list(1)
-      If(model_data%config%atom(k)%tag==model_data%species_definition%reference_tag%type) Then
+      If (model_data%config%atom(k)%tag==model_data%species_definition%reference_tag%type) Then
         If (model_data%config%species(j)%alive) Then
           model_data%config%species(j)%alive=.True.
         Else
@@ -616,7 +601,7 @@ Contains
       Write (messages(6),'(a)') ' 4) wrong definition of the monitored species.&
                                 & Check the "reference_tag" and the &atomic_components block.'
       Call info(messages, 6)
-      If (model_data%chem%acceptor%info_exclude%fread)Then
+      If (model_data%chem%acceptor%info_exclude%fread) Then
         Write (messages(1),'(a)') ' 5) Inadequate use of the "exclude_pairs" directive. Try removing this directive.'  
         Call info(messages, 1)
       End If 
@@ -647,7 +632,7 @@ Contains
     ! For relevent indexes, find the initial index list
     model_data%config%Nmax_species=0
     Do j = 1, model_data%config%num_atoms
-      If(model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
+      If (model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
        model_data%config%Nmax_species=model_data%config%Nmax_species+1 
       End If
     End Do 
@@ -666,7 +651,7 @@ Contains
   
     icount=0
     Do j = 1, model_data%config%num_atoms
-      If(model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
+      If (model_data%config%atom(j)%tag_0==model_data%species_definition%reference_tag%type) Then
        icount=icount+1 
        model_data%config%species(icount)%list(1)=j
       End If
@@ -681,7 +666,7 @@ Contains
     ! author    - i.scivetti Jan 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(model_type), Intent(InOut) :: model_data
-    Integer(Kind=wi),    Intent(In   ) :: frame
+    Integer(Kind=wi), Intent(In   ) :: frame
 
     Integer(Kind=wi) :: i, j, indx_new
     Real(Kind=wp)    :: dist, dist_min
@@ -734,7 +719,7 @@ Contains
     ! author    - i.scivetti Jan 2023
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     Type(model_type), Intent(InOut) :: model_data
-    Integer(Kind=wi),    Intent(In   ) :: frame
+    Integer(Kind=wi), Intent(In   ) :: frame
 
     Integer(Kind=wi) :: i, j, k, m
     Character(Len=256) :: messages(2)
@@ -960,13 +945,13 @@ Contains
               End Do
               If (k2/=1) Then
                 If ( ( .Not. (Any(model_data%chem%acceptor%accum_indxs==m)) ) .And. &
-                     ( .Not. (Any(model_data%chem%indx_prev==m)) ) ) then
+                     ( .Not. (Any(model_data%chem%indx_prev==m)) ) ) Then
                   ihit=ihit+1
                   N0_counted=N0_counted+1
                   model_data%chem%acceptor%accum_indxs(N0_counted)=m
                 End If
               Else
-                If (.Not. (Any(model_data%chem%acceptor%accum_indxs==m)) ) then
+                If (.Not. (Any(model_data%chem%acceptor%accum_indxs==m)) ) Then
                   ihit=ihit+1
                   N0_counted=N0_counted+1
                   model_data%chem%acceptor%accum_indxs(N0_counted)=m
@@ -982,7 +967,7 @@ Contains
         If (ihit == 0) Then
            icc=0     
            Do indx = 1, N0_counted     
-             If ( .Not. (model_data%chem%acceptor%accum_indxs(indx)==model_data%chem%acceptor%list(1))) then     
+             If ( .Not. (model_data%chem%acceptor%accum_indxs(indx)==model_data%chem%acceptor%list(1))) Then     
                icc=icc+1
              End If
            End Do
@@ -1068,13 +1053,13 @@ Contains
     match=.False.
     Do k1= 1, icount
       Do k2= 1, icount
-        If(k1/=k2 .And. (model_data%chem%bonds%list(k1)==model_data%chem%bonds%list(k2))) Then
+        If (k1/=k2 .And. (model_data%chem%bonds%list(k1)==model_data%chem%bonds%list(k2))) Then
           match=.True.
         End If        
       End Do
     End Do
 
-    If(match)Then
+    If (match) Then
       Write (messages(1), '(1x,a,i6, a)') '*** ERROR: problems to identify the chemistry for the configuration ',&
                                          & frame,' of the trajectory.'
       Call info(messages, 1)
@@ -1108,18 +1093,18 @@ Contains
     m=1
 
     Do While (m <= model_data%chem%acceptor%N0_incl .And. (.Not. match1))
-      If(model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m) .Or.&
+      If (model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m) .Or.&
          model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(m)) Then
         match1=.True. 
-        If((model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m)) .And. &
-           (.Not. model_data%config%atom(i)%identified))Then
+        If ((model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_incl(m)) .And. &
+           (.Not. model_data%config%atom(i)%identified)) Then
           indx=i
           If (((model_data%config%atom(j)%element==model_data%chem%bonds%species%type) .And. &
               (.Not. model_data%config%atom(j)%identified))) Then
             match2=.True.  
           End If
         
-        Else If((model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(m)) .And.&
+        Else If ((model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_incl(m)) .And.&
                 (.Not. model_data%config%atom(j)%identified)) Then
           indx=j
           If ((model_data%config%atom(i)%element==model_data%chem%bonds%species%type) .And. &
@@ -1138,10 +1123,10 @@ Contains
       If (dist < model_data%chem%bonds%cutoff%value ) Then
         model_data%config%atom(indx)%Nbonds=model_data%config%atom(indx)%Nbonds+1 
         N0=model_data%config%atom(indx)%Nbonds
-        If(model_data%config%atom(i)%element==model_data%chem%bonds%species%type) Then
+        If (model_data%config%atom(i)%element==model_data%chem%bonds%species%type) Then
           model_data%config%atom(i)%identified=.True.
           model_data%config%atom(j)%bonds(N0)=i
-        Else If(model_data%config%atom(j)%element==model_data%chem%bonds%species%type) Then
+        Else If (model_data%config%atom(j)%element==model_data%chem%bonds%species%type) Then
           model_data%config%atom(j)%identified=.True.
           model_data%config%atom(i)%bonds(N0)=j
         End If
@@ -1211,10 +1196,10 @@ Contains
     Do While (j <= model_data%config%num_atoms)
       If (i/=j) Then
         match_self=.False.
-        If (model_data%chem%acceptor%info_exclude%fread)Then
+        If (model_data%chem%acceptor%info_exclude%fread) Then
           m=1
           Do While (m <= model_data%chem%acceptor%N0_excl .And. (.Not. match_self))
-            If(model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_excl(m) .And.&
+            If (model_data%config%atom(i)%tag==model_data%chem%acceptor%tg_excl(m) .And.&
                model_data%config%atom(j)%tag==model_data%chem%acceptor%tg_excl(m)) Then
                match_self=.True.
             End If
@@ -1233,7 +1218,7 @@ Contains
               match_j=.True.
             End If
           End Do
-          If(match_i .And. match_j) Then
+          If (match_i .And. match_j) Then
             If (model_data%chem%acceptor%check) Then
               Call compute_distance_PBC(model_data%config%atom(i)%r0, model_data%config%atom(j)%r0,&
                                     & model_data%config%cell, model_data%config%invcell, dist)
@@ -1323,13 +1308,13 @@ Contains
     Logical            :: f1, f2
 
     Do k = 1, model_data%extra_bonds%N0
-      If(.Not. match) Then
+      If (.Not. match) Then
         f1=(model_data%config%atom(i)%tag==model_data%extra_bonds%tg1(k) .And.&
             model_data%config%atom(j)%tag==model_data%extra_bonds%tg2(k)) 
         f2=(model_data%config%atom(j)%tag==model_data%extra_bonds%tg1(k) .And.&
             model_data%config%atom(i)%tag==model_data%extra_bonds%tg2(k)) 
 
-        If(f1 .Or. f2) Then
+        If (f1 .Or. f2) Then
           Call compute_distance_PBC(model_data%config%atom(i)%r, model_data%config%atom(j)%r,&
                                    & model_data%config%cell, model_data%config%invcell, dist)
           If (dist < model_data%extra_bonds%bond(k)%value) Then
@@ -1340,13 +1325,13 @@ Contains
         End If   
 
         If (match) Then
-          If((model_data%config%atom(i)%element==model_data%chem%bonds%species%type) .And. &
+          If ((model_data%config%atom(i)%element==model_data%chem%bonds%species%type) .And. &
              (.Not. model_data%config%atom(i)%identified)) Then
              model_data%chem%indx_new(l) = j
              model_data%config%atom(i)%identified=.True.
              model_data%config%atom(j)%bonds(1)=i
              model_data%config%atom(j)%Nbonds=1
-          Else If((model_data%config%atom(j)%element==model_data%chem%bonds%species%type) .And. &
+          Else If ((model_data%config%atom(j)%element==model_data%chem%bonds%species%type) .And. &
              (.Not. model_data%config%atom(j)%identified)) Then
              model_data%chem%indx_new(l) = i
              model_data%config%atom(j)%identified=.True.
@@ -1509,7 +1494,7 @@ Contains
     error_vasp = .False.
     input_file = Trim(files(FILE_TRAJECTORY)%filename) 
     iunit=files(FILE_TRAJECTORY)%unit_no
-    Write(word_frame,*) frame
+    Write (word_frame,*) frame
 
     set_error = '***ERROR in file '//Trim(input_file)//' (inconsistency with POSCAR format) at frame '&
                &//Trim(Adjustl(word_frame))//'. '
@@ -1980,8 +1965,8 @@ Contains
       limit1=ratio
       limit2=-ratio
     Else If (Abs(ratio-1.0_wp) < epsilon(ratio)) Then
-      limit1=ratio !+length_tol
-      limit2=0.0_wp !-length_tol
+      limit1=ratio 
+      limit2=0.0_wp 
     End If
 
     ! Express vector difference in terms of the cell vectors
@@ -2269,11 +2254,6 @@ Contains
       Call check_definition_monitored_species(files, model_data)
     End If
 
-    ! Check &selected_nn_distances
-    If (model_data%nndist%invoke%fread) Then
-      Call check_selected_nn_distances(files, model_data%nndist, model_data)
-    End If
-    
   End Subroutine check_model_settings
 
   Subroutine check_chemistry_criteria(files, model_data)
@@ -2590,7 +2570,7 @@ Contains
       End If
 
     ! Check intrinsic tags wihtin the bond
-      If(Trim(model_data%extra_bonds%tg1(k)) == Trim(model_data%extra_bonds%tg2(k))) Then
+      If (Trim(model_data%extra_bonds%tg1(k)) == Trim(model_data%extra_bonds%tg2(k))) Then
         Write (messages(2),'(1x,a,i3,a)') 'The tags for the specification of the type of bond ', k, &
                                           & ' must be different. Please review the settings'
         Call info(messages, 2)         
@@ -2925,12 +2905,12 @@ Contains
     Do j = 1, M%nspecies
       M%num_spec(j)=0
       Do k = 1, T%num_components
-        If (Trim(M%species(j))==Trim(T%element(k)))Then
+        If (Trim(M%species(j))==Trim(T%element(k))) Then
           M%num_spec(j)=M%num_spec(j)+1
         End If
       End Do      
       If (M%num_spec(j)==0) Then
-        Write(num,'(i1)') j 
+        Write (num,'(i1)') j 
         Write (messages(3),'(1x,a)') 'Argument '//Trim(num)//' of the "species" directive does not&
                                      & correspond to the elements defined in "&atomic_components"' 
         Call info(messages, 3)
@@ -2942,12 +2922,12 @@ Contains
     Do k = 1, T%num_components
       n=0
       Do j = 1, M%nspecies
-        If (Trim(M%species(j))==Trim(T%element(k)))Then
+        If (Trim(M%species(j))==Trim(T%element(k))) Then
           n=n+1
         End If
       End Do
-      If (n>T%N0_element(k))Then
-        Write(num,'(i1)') n 
+      If (n>T%N0_element(k)) Then
+        Write (num,'(i1)') n 
         Write (messages(3),'(1x,a)') 'The number of times the element "'//Trim(T%element(k))//'" is listed in the&
                                    & "species" directive ('//Trim(num)//' times) exceeds the value set in "&atomic_components"' 
         Call info(messages, 3)
@@ -3045,130 +3025,7 @@ Contains
     End If  
      
   End Subroutine check_settings_geom_param
-    
-  Subroutine check_selected_nn_distances(files, M, model_data)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Subroutine to check the definition of the
-    ! parameters defined in the &selected_nn_distances block
-    !
-    ! author    - i.scivetti Nov 2023
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    Type(file_type),       Intent(InOut) :: files(:)
-    Type(short_dist_type), Intent(InOut) :: M 
-    Type(model_type),      Intent(In   ) :: model_data
-
-    Character(Len=256)  :: messages(3), error_set
-    Character(Len=8)    :: tagj, tagk
-    Logical             :: flag
-    Integer(Kind=wi)    :: j, k
-    
-    ! Error message just in case....
-    error_set = '***ERROR in file '//Trim(files(FILE_SET)%filename)//' -'
-    Write (messages(1),'(1x,2a)')  Trim(error_set), ' "&selected_nn_distances" block.'
-
-    If(M%tag_nn_species%fread) Then
-      If (M%tag_nn_species%fail) Then
-        Write (messages(2),'(1x,a)')  'Problems to define the "nn_species" directive'  
-        call info(messages, 2)
-        call error_stop(' ')
-      End If
-    Else
-      Write (messages(2),'(1x,a)')  'The user must define the "nn_species" directive'  
-      call info(messages, 2)
-      call error_stop(' ')
-    End If
-
-    If(M%tag_reference_species%fread) Then
-      If (M%tag_reference_species%fail) Then
-        Write (messages(2),'(1x,a)')  'Problems to define the "reference_species" directive'  
-        call info(messages, 2)
-        call error_stop(' ')
-      End If
-    Else
-      Write (messages(2),'(1x,a)')  'The user must define the "reference_species" directive'  
-      call info(messages, 2)
-      call error_stop(' ')
-    End If
-
-    !Check if the reference_species is defined in the &input_composition block  
-    tagk=Trim(M%reference_species)
-    Call remove_symbols(tagk,'*')
-    flag=.True.
-    j=1
-    Do While (j <= model_data%input_composition%atomic_species .And. flag)
-      If (Trim(model_data%input_composition%tag(j))==Trim(tagk)) Then
-        flag=.False.
-      End If  
-      j=j+1
-    End Do
-    If (flag) Then
-      Write (messages(2),'(1x,a)')   'The tag "'//Trim(M%reference_species)//&
-                                     &'" defined in the "reference_species" directive is not a valid option.&
-                                     & Please check the definition of the &input_composition block' 
-      Call info(messages, 2)
-      Call error_stop(' ') 
-    End If 
-    
-    !Check if tags in nn_species are defined in the &input_composition block  
-    Do k=1, M%num_nn_species
-      tagk=Trim(M%nn_species(k))
-      Call remove_symbols(tagk,'*')
-      flag=.True.
-      j=1
-      Do While (j <= model_data%input_composition%atomic_species .And. flag)
-        If (Trim(model_data%input_composition%tag(j))==Trim(tagk)) Then
-          flag=.False.
-        End If  
-        j=j+1
-      End Do
-      If (flag) Then
-        Write (messages(2),'(1x,a)')   'The tag "'//Trim(M%nn_species(k))//&
-                                       &'" defined in the "nn_species" directive is not a valid option.&
-                                       & Please check the definition of the &input_composition block' 
-        Call info(messages, 2)
-        Call error_stop(' ') 
-      End If 
-    End Do
-
-    !Check if tags defined in nn_species are repeated
-    Do j=1, M%num_nn_species-1
-      tagj=Trim(M%nn_species(j))
-      Do k=j+1, M%num_nn_species 
-        tagk=Trim(M%nn_species(k))
-        If (Trim(tagj)==Trim(tagk)) Then
-          Write (messages(2),'(1x,a)')   'The tag "'//Trim(tagj)//&
-                                         &'" is repeated in the specification of the "nn_species" directive.&
-                                         & Please remove this duplication.' 
-          Call info(messages, 2)
-          Call error_stop(' ') 
-        End If 
-      End Do
-    End Do
-
-    !Check lower_bound, upper_bound and delta
-    If (.Not. M%lower_bound%fread) Then
-      M%lower_bound%tag='lower_bound'
-    End If
-    If (.Not. M%upper_bound%fread) Then
-      M%upper_bound%tag='upper_bound'
-    End If
-    If (.Not. M%dr%fread) Then
-      M%dr%tag='delta'
-    End If
-    
-    Call check_length_directive(M%lower_bound, messages(1), .True., 'directive')
-    Call check_length_directive(M%upper_bound, messages(1), .True., 'directive')
-    Call check_length_directive(M%dr,          messages(1), .True., 'directive')
-    If (M%lower_bound%value >= M%upper_bound%value) Then
-      Write (messages(2),'(1x,a)')  'The value of "upper_bound" must be larger than "lower_bound"&
-                                  & (make sure this is the case if you use different units)' 
-      Call info(messages, 2)
-      Call error_stop(' ') 
-    End If
-     
-  End Subroutine check_selected_nn_distances
-  
-  
+ 
   Subroutine check_angle_directive(T, error_set, kill, type_directive)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Subroutine to check angle related directives
@@ -3227,7 +3084,6 @@ Contains
     End If
     
   End Subroutine check_angle_directive  
-  
   
   Subroutine check_length_directive(T, error_set, kill, type_directive)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

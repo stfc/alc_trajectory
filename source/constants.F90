@@ -1,7 +1,7 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! Module containing constants and parameters for computation
 !
-! Copyright   2023-2024 Ada Lovelace Centre (ALC)
+! Copyright   2023-2026 Ada Lovelace Centre (ALC)
 !             Scientific Computing Department (SCD)
 !             The Science and Technology Facilities Council (STFC)
 !
@@ -16,8 +16,8 @@ Module constants
 
   ! Code reference 
   Character(Len=16), Parameter, Public  :: code_name    = "ALC_TRAJECTORY" 
-  Character(Len=16), Parameter, Public  :: code_VERSION = "1.5"
-  Character(Len=16), Parameter, Public  :: date_RELEASE = "Oct  2025"
+  Character(Len=16), Parameter, Public  :: code_VERSION = "1.6"
+  Character(Len=16), Parameter, Public  :: date_RELEASE = "Apr  2026"
 
   ! FIXED PARAMETERS
   Real(Kind=wp), Parameter, Public  :: pi    = 3.14159265358979312e0_wp 
