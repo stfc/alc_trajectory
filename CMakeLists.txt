@@ -27,22 +27,17 @@ add_executable(alc_trajectory.x ${SOURCES})
 #Directives for buling the code automatically
 if (NOT FLAGS_SET)
   if(${CMAKE_Fortran_COMPILER_ID} STREQUAL "GNU")
-
-    if (${CMAKE_Fortran_COMPILER_VERSION} VERSION_GREATER "6.5" )
-      set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wextra -Wuse-without-only -frecursive -frecord-gcc-switches -O0 -std=f2018 -pedantic -fbacktrace -fcheck=all -finit-integer=2147483647 -finit-real=snan -finit-logical=true -finit-character=42 -finit-derived -ffpe-trap=invalid,zero,overflow -fdump-core -fstack-protector-all -Wall -pipe" CACHE STRING "Flags used by the GNU-Fortran compiler for DEBUG option." FORCE)
-    else()
-      set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wextra -Wuse-without-only -frecord-gcc-switches -O0 -std=f2008 -pedantic -fbacktrace -fcheck=all -finit-integer=2147483647 -finit-real=snan -finit-logical=true -finit-character=42  -ffpe-trap=invalid,zero,overflow -fdump-core -fstack-protector-all -Wall -pipe" CACHE STRING "Flags used by the GNU-Fortran compiler for the DEBUG option." FORCE)
+    if (${CMAKE_Fortran_COMPILER_VERSION} VERSION_LESS "11.2.0")
+      message(FATAL_ERROR "***ERROR: The code was not tested against this GNU-Fortran compiler version (the recommended minimum version is 11.2.0) ...The user could try building the code manually... at its own risk!")
     endif()
+
+    set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wextra -Wuse-without-only -frecursive -frecord-gcc-switches -O0 -std=f2018 -pedantic -fbacktrace -fcheck=all -finit-integer=2147483647 -finit-real=snan -finit-logical=true -finit-character=42 -finit-derived -ffpe-trap=invalid,zero,overflow -fdump-core -fstack-protector-all -Wall -pipe" CACHE STRING "Flags used by the GNU-Fortran compiler for DEBUG option." FORCE)
     set(CMAKE_Fortran_FLAGS_RELEASE "-Ofast -ftree-vectorize -funroll-loops -ffast-math" CACHE STRING "Flags used by the GNU-Fortran compiler for the RELEASE option." FORCE)
-
-    if (${CMAKE_Fortran_COMPILER_VERSION} VERSION_LESS "5.4.0")
-      message(FATAL_ERROR "***ERROR: The code was not tested against this Intel compiler version (the recommended minimum version is 5.4.0) ...The user could try building the code manually... at its own risk!")
-    endif()
 
   elseif(${CMAKE_Fortran_COMPILER_ID} STREQUAL "IntelLLVM")
 
    if (${CMAKE_Fortran_COMPILER_VERSION} VERSION_LESS "2025.1.1")
-     message(FATAL_ERROR "***ERROR: The DEBUG compilation for versions older th 2025.1.1 showed problems ...The user could try building the code manually... at its own risk!")
+     message(FATAL_ERROR "***ERROR: The DEBUG compilation for versions older than 2025.1.1 showed problems ...The user could try building the code manually... at its own risk!")
    endif()
 
    set(CMAKE_Fortran_FLAGS_DEBUG "-g -O0 -warn all -check all -traceback -qno-openmp-simd -standard-semantics -fp-model fast=2 -assume nan_compares" CACHE STRING "Flags used by the Intel-Fortran compiler for the DEBUG option." FORCE)
